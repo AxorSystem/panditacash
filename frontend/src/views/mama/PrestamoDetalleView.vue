@@ -72,21 +72,28 @@ const estadoColor: Record<string, string> = {
       <button @click="router.back()" class="text-panda-700 text-lg">←</button>
       <router-link :to="`/mama/cliente/${data.uid}`" class="flex-1 min-w-0">
         <div class="text-xl font-extrabold truncate">{{ data.cliente_nombre }}</div>
-        <div class="text-xs text-slate-500 flex items-center gap-1">💬 {{ data.cliente_tel }}</div>
+        <div class="text-xs text-slate-500">📱 {{ data.cliente_tel }}</div>
       </router-link>
       <span class="chip" :class="data.estado === 'activo' ? 'bg-panda-100 text-panda-800' : 'bg-emerald-100 text-emerald-700'">
         {{ data.estado }}
       </span>
     </div>
 
+    <!-- Botón grande: Chatear por WhatsApp -->
+    <a :href="`https://wa.me/${data.cliente_tel}?text=${encodeURIComponent('Hola ' + data.cliente_nombre.split(' ')[0] + ', te escribo de PanditaCash. Tu próximo pago es de ' + (data.proximo ? '$' + Math.round(data.proximo.total_pendiente).toLocaleString('es-MX') : '') + '.')}`"
+       target="_blank" rel="noreferrer"
+       class="block w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-3 rounded-2xl text-center active:scale-[0.97] transition shadow-lg shadow-emerald-500/30">
+      💬 Enviarle WhatsApp de recordatorio
+    </a>
+
     <!-- Resumen -->
     <div class="card p-5 space-y-2 bg-gradient-to-br from-panda-50 to-white border-panda-200">
       <div class="text-xs font-bold text-panda-700 uppercase tracking-wider">Préstamo</div>
       <div class="text-4xl font-extrabold">{{ fmt(data.principal) }}</div>
       <div class="flex items-center gap-2 text-sm text-slate-600 flex-wrap">
-        <span>📅 {{ data.plazo_meses }} meses</span>
+        <span>{{ data.frecuencia === 'quincenal' ? '📆' : '📅' }} {{ data.plazo_meses }} {{ data.frecuencia === 'quincenal' ? 'quincenas' : 'meses' }}</span>
         <span>·</span>
-        <span>{{ (data.tasa_mensual * 100).toFixed(0) }}% / mes</span>
+        <span>{{ (data.tasa_mensual * 100).toFixed(0) }}% / {{ data.frecuencia === 'quincenal' ? 'quincena' : 'mes' }}</span>
         <span v-if="Number(data.mora_diaria) > 0">·</span>
         <span v-if="Number(data.mora_diaria) > 0">🚨 {{ fmt(data.mora_diaria) }}/día mora</span>
       </div>

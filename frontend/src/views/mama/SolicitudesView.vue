@@ -9,6 +9,7 @@ const cargando = ref(true);
 const seleccionada = ref<any>(null);
 const tasa = ref(15);
 const mora = ref(50);
+const frecuencia = ref<'mensual' | 'quincenal'>('mensual');
 const respNotas = ref('');
 const guardando = ref(false);
 
@@ -27,6 +28,7 @@ async function responder(accion: 'aprobar' | 'rechazar') {
       accion,
       tasa_mensual: accion === 'aprobar' ? tasa.value / 100 : undefined,
       mora_diaria: accion === 'aprobar' ? mora.value : undefined,
+      frecuencia: accion === 'aprobar' ? frecuencia.value : undefined,
       notas: respNotas.value,
     });
     seleccionada.value = null;
@@ -67,7 +69,7 @@ function fmtDia(d: string) { return new Date(d).toLocaleDateString('es-MX', { da
           </div>
         </div>
         <div v-if="s.motivo" class="text-sm text-slate-700 bg-slate-50 rounded-xl p-3 mt-3 italic">"{{ s.motivo }}"</div>
-        <button @click="seleccionada = s; tasa = 15; mora = 50; respNotas = ''" class="btn-primary w-full mt-3">Revisar</button>
+        <button @click="seleccionada = s; tasa = 15; mora = 50; frecuencia = 'mensual'; respNotas = ''" class="btn-primary w-full mt-3">Revisar</button>
       </div>
     </div>
 
@@ -84,9 +86,24 @@ function fmtDia(d: string) { return new Date(d).toLocaleDateString('es-MX', { da
           <div v-if="seleccionada.motivo" class="text-sm italic mt-2">"{{ seleccionada.motivo }}"</div>
         </div>
         <div class="text-sm font-bold text-slate-500 uppercase tracking-wider">Si apruebas</div>
+        <div>
+          <div class="text-sm font-semibold text-slate-600 mb-2">¿Cómo cobrará?</div>
+          <div class="grid grid-cols-2 gap-2">
+            <button @click="frecuencia = 'mensual'"
+              class="py-2.5 rounded-2xl font-bold text-sm transition"
+              :class="frecuencia === 'mensual' ? 'bg-panda-500 text-white' : 'bg-white border-2 border-panda-200 text-slate-700'">
+              📅 Mensual
+            </button>
+            <button @click="frecuencia = 'quincenal'"
+              class="py-2.5 rounded-2xl font-bold text-sm transition"
+              :class="frecuencia === 'quincenal' ? 'bg-panda-500 text-white' : 'bg-white border-2 border-panda-200 text-slate-700'">
+              📆 Quincenal
+            </button>
+          </div>
+        </div>
         <div class="grid grid-cols-2 gap-3">
           <label for="s-tasa" class="block">
-            <span class="text-sm font-semibold">Interés</span>
+            <span class="text-sm font-semibold">Interés / {{ frecuencia === 'quincenal' ? 'quincena' : 'mes' }}</span>
             <div class="relative mt-1">
               <input id="s-tasa" v-model.number="tasa" type="number" step="1" class="input pr-8" />
               <span class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">%</span>

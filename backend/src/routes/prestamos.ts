@@ -70,9 +70,10 @@ router.get('/dashboard', requireAdmin, async (req, res) => {
 
 /** POST /api/prestamos — admin crea préstamo directo */
 router.post('/', requireAdmin, async (req: any, res) => {
-  const { telefono, nombre, principal, tasa_mensual, plazo_meses, mora_diaria, fecha_inicio, notas } = req.body ?? {};
+  const { telefono, nombre, principal, tasa_mensual, plazo_meses, mora_diaria, fecha_inicio, frecuencia, notas } = req.body ?? {};
   if (!telefono || !principal || !tasa_mensual || !plazo_meses)
     return res.status(400).json({ error: 'Faltan datos' });
+  const frec = (frecuencia === 'quincenal') ? 'quincenal' : 'mensual';
 
   const tel = normalizarTel(telefono);
 
@@ -95,19 +96,20 @@ router.post('/', requireAdmin, async (req: any, res) => {
     plazo_meses: Number(plazo_meses),
     mora_diaria: Number(mora_diaria) || 0,
     fecha_inicio: fecha_inicio || new Date().toISOString().slice(0, 10),
+    frecuencia: frec as 'mensual' | 'quincenal',
   };
   const calc = calcularPrestamo(p);
 
   const insP = await query(
     `INSERT INTO dbo.prestamos
        (usuario_id, principal, tasa_mensual, plazo_meses, interes_mensual,
-        monto_entregado, mora_diaria, fecha_inicio, aprobado_por, notas)
+        monto_entregado, mora_diaria, fecha_inicio, aprobado_por, notas, frecuencia)
      OUTPUT INSERTED.id
-     VALUES (@u, @pr, @t, @pm, @im, @me, @md, @fi, @ap, @no)`,
+     VALUES (@u, @pr, @t, @pm, @im, @me, @md, @fi, @ap, @no, @fr)`,
     {
       u: usuario_id, pr: p.principal, t: p.tasa_mensual, pm: p.plazo_meses,
       im: calc.interes_mensual, me: calc.monto_entregado, md: p.mora_diaria,
-      fi: p.fecha_inicio, ap: req.user.id, no: notas ?? null,
+      fi: p.fecha_inicio, ap: req.user.id, no: notas ?? null, fr: p.frecuencia,
     },
   );
   const prestamo_id = insP.recordset[0].id;
@@ -292,8 +294,9 @@ router.post('/:id/cobrar', requireAdmin, async (req: any, res) => {
 
 /** POST /api/prestamos/simular — cálculo previo */
 router.post('/simular', async (req, res) => {
-  const { principal, tasa_mensual, plazo_meses } = req.body ?? {};
+  const { principal, tasa_mensual, plazo_meses, frecuencia } = req.body ?? {};
   if (!principal || !tasa_mensual || !plazo_meses) return res.status(400).json({ error: 'Faltan datos' });
+  const frec = (frecuencia === 'quincenal') ? 'quincenal' : 'mensual';
   const calc = calcularPrestamo({
     principal: Number(principal),
     tasa_mensual: Number(tasa_mensual),
@@ -305,8 +308,9 @@ router.post('/simular', async (req, res) => {
     plazo_meses: Number(plazo_meses),
     mora_diaria: 0,
     fecha_inicio: new Date().toISOString().slice(0, 10),
+    frecuencia: frec,
   });
-  res.json({ ...calc, pagos });
+  res.json({ ...calc, pagos, frecuencia: frec });
 });
 
 /** GET /api/prestamos/mios — cliente ve sus préstamos */

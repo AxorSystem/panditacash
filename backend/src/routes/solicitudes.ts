@@ -70,6 +70,8 @@ router.post('/:id/responder', requireAdmin, async (req: any, res) => {
 
   if (accion !== 'aprobar') return res.status(400).json({ error: 'Acción inválida' });
   if (!tasa_mensual) return res.status(400).json({ error: 'Falta tasa_mensual para aprobar' });
+  const { frecuencia } = req.body ?? {};
+  const frec: 'mensual' | 'quincenal' = frecuencia === 'quincenal' ? 'quincenal' : 'mensual';
 
   const p = {
     principal: Number(s.monto_solicitado),
@@ -77,19 +79,20 @@ router.post('/:id/responder', requireAdmin, async (req: any, res) => {
     plazo_meses: Number(s.plazo_meses),
     mora_diaria: Number(mora_diaria) || 0,
     fecha_inicio: new Date().toISOString().slice(0, 10),
+    frecuencia: frec,
   };
   const calc = calcularPrestamo(p);
 
   const insP = await query(
     `INSERT INTO dbo.prestamos
        (usuario_id, principal, tasa_mensual, plazo_meses, interes_mensual,
-        monto_entregado, mora_diaria, fecha_inicio, aprobado_por, notas)
+        monto_entregado, mora_diaria, fecha_inicio, aprobado_por, notas, frecuencia)
      OUTPUT INSERTED.id
-     VALUES (@u, @pr, @t, @pm, @im, @me, @md, @fi, @ap, @no)`,
+     VALUES (@u, @pr, @t, @pm, @im, @me, @md, @fi, @ap, @no, @fr)`,
     {
       u: s.usuario_id, pr: p.principal, t: p.tasa_mensual, pm: p.plazo_meses,
       im: calc.interes_mensual, me: calc.monto_entregado, md: p.mora_diaria,
-      fi: p.fecha_inicio, ap: req.user.id, no: notas ?? null,
+      fi: p.fecha_inicio, ap: req.user.id, no: notas ?? null, fr: p.frecuencia,
     },
   );
   const prestamo_id = insP.recordset[0].id;

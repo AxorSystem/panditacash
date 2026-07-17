@@ -9,6 +9,7 @@ import mi from './routes/mi.js';
 import clientes from './routes/clientes.js';
 import movimientos from './routes/movimientos.js';
 import analytics from './routes/analytics.js';
+import { iniciarScheduler, ejecutarRecordatorios } from './services/recordatorios.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -37,6 +38,18 @@ app.use('/api/clientes', clientes);
 app.use('/api/movimientos', movimientos);
 app.use('/api/analytics', analytics);
 
+/** Trigger manual del barrido de recordatorios (útil para pruebas). */
+app.post('/api/admin/recordatorios/run', async (req, res) => {
+  const auth = req.headers.authorization?.replace('Bearer ', '') ?? '';
+  const jwt = await import('jsonwebtoken');
+  try {
+    const p: any = jwt.default.verify(auth, process.env.JWT_SECRET || 'dev-secret-change-me');
+    if (!p.es_admin) return res.status(403).json({ error: 'Solo admin' });
+  } catch { return res.status(401).json({ error: 'No autenticado' }); }
+  const r = await ejecutarRecordatorios();
+  res.json(r);
+});
+
 app.use((req, res) => res.status(404).json({ error: 'ruta no encontrada' }));
 app.use((err: any, req: any, res: any, _next: any) => {
   console.error('[error]', err);
@@ -47,6 +60,7 @@ try {
   await getPool();
   app.listen(config.port, () => {
     console.log(`🐼 PanditaCash backend en :${config.port}`);
+    iniciarScheduler();
   });
 } catch (e: any) {
   console.error('✗ No se pudo conectar a SQL Server:', e.message);

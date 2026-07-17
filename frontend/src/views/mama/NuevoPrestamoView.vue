@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import api from '@/lib/api';
+import { fmt } from '@/lib/format';
 
 const router = useRouter();
 
@@ -11,11 +12,12 @@ const form = ref({
   principal: 10000,
   tasa_mensual_pct: 15,
   plazo_meses: 3,
+  frecuencia: 'mensual' as 'mensual' | 'quincenal',
   mora_diaria: 50,
   notas: '',
 });
 
-const sim = ref<{ interes_mensual: number; monto_entregado: number; total_a_pagar: number; ganancia_total: number } | null>(null);
+const sim = ref<any>(null);
 const guardando = ref(false);
 const error = ref('');
 
@@ -26,12 +28,13 @@ async function simular() {
       principal: form.value.principal,
       tasa_mensual: form.value.tasa_mensual_pct / 100,
       plazo_meses: form.value.plazo_meses,
+      frecuencia: form.value.frecuencia,
     });
     sim.value = r.data;
   } catch { sim.value = null; }
 }
 
-watch(() => [form.value.principal, form.value.tasa_mensual_pct, form.value.plazo_meses], simular, { immediate: true });
+watch(() => [form.value.principal, form.value.tasa_mensual_pct, form.value.plazo_meses, form.value.frecuencia], simular, { immediate: true });
 
 async function crear() {
   if (!form.value.telefono || !form.value.nombre) { error.value = 'Falta teléfono y nombre'; return; }
@@ -44,6 +47,7 @@ async function crear() {
       principal: form.value.principal,
       tasa_mensual: form.value.tasa_mensual_pct / 100,
       plazo_meses: form.value.plazo_meses,
+      frecuencia: form.value.frecuencia,
       mora_diaria: form.value.mora_diaria,
       notas: form.value.notas,
     });
@@ -53,7 +57,8 @@ async function crear() {
   } finally { guardando.value = false; }
 }
 
-function fmt(n: number) { return '$' + Math.round(n).toLocaleString('es-MX'); }
+const periodoLabel = (): string => form.value.frecuencia === 'quincenal' ? 'quincena' : 'mes';
+const periodoLabelPlural = (): string => form.value.frecuencia === 'quincenal' ? 'quincenas' : 'meses';
 </script>
 
 <template>
@@ -63,7 +68,7 @@ function fmt(n: number) { return '$' + Math.round(n).toLocaleString('es-MX'); }
       <h1 class="text-2xl font-extrabold">Nuevo préstamo</h1>
     </div>
 
-    <!-- Datos del cliente -->
+    <!-- Cliente -->
     <div class="card p-5 space-y-3">
       <div class="text-sm font-bold text-slate-500 uppercase tracking-wider">Cliente</div>
       <label for="np-nombre" class="block">
@@ -79,13 +84,34 @@ function fmt(n: number) { return '$' + Math.round(n).toLocaleString('es-MX'); }
     <!-- Términos -->
     <div class="card p-5 space-y-3">
       <div class="text-sm font-bold text-slate-500 uppercase tracking-wider">Términos</div>
+
       <label for="np-principal" class="block">
         <span class="text-sm font-semibold text-slate-600">Monto del préstamo</span>
         <input id="np-principal" v-model.number="form.principal" type="number" step="500" class="input mt-1 text-2xl font-bold" />
       </label>
+
+      <!-- Selector de frecuencia -->
+      <div>
+        <div class="text-sm font-semibold text-slate-600 mb-2">¿Cómo cobrará?</div>
+        <div class="grid grid-cols-2 gap-2">
+          <button @click="form.frecuencia = 'mensual'"
+            class="py-3 rounded-2xl font-bold transition"
+            :class="form.frecuencia === 'mensual' ? 'bg-panda-500 text-white shadow-lg shadow-panda-500/30' : 'bg-white border-2 border-panda-200 text-slate-700'">
+            📅 Mensual
+            <div class="text-[10px] font-normal opacity-80 mt-0.5">cada 30 días</div>
+          </button>
+          <button @click="form.frecuencia = 'quincenal'"
+            class="py-3 rounded-2xl font-bold transition"
+            :class="form.frecuencia === 'quincenal' ? 'bg-panda-500 text-white shadow-lg shadow-panda-500/30' : 'bg-white border-2 border-panda-200 text-slate-700'">
+            📆 Quincenal
+            <div class="text-[10px] font-normal opacity-80 mt-0.5">cada 15 días</div>
+          </button>
+        </div>
+      </div>
+
       <div class="grid grid-cols-2 gap-3">
         <label for="np-tasa" class="block">
-          <span class="text-sm font-semibold text-slate-600">Interés / mes</span>
+          <span class="text-sm font-semibold text-slate-600">Interés por {{ periodoLabel() }}</span>
           <div class="relative mt-1">
             <input id="np-tasa" v-model.number="form.tasa_mensual_pct" type="number" step="1" min="1" max="50" class="input pr-8" />
             <span class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">%</span>
@@ -94,16 +120,18 @@ function fmt(n: number) { return '$' + Math.round(n).toLocaleString('es-MX'); }
         <label for="np-plazo" class="block">
           <span class="text-sm font-semibold text-slate-600">Plazo</span>
           <div class="relative mt-1">
-            <input id="np-plazo" v-model.number="form.plazo_meses" type="number" step="1" min="1" max="24" class="input pr-16" />
-            <span class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">meses</span>
+            <input id="np-plazo" v-model.number="form.plazo_meses" type="number" step="1" min="1" max="24" class="input pr-20" />
+            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">{{ periodoLabelPlural() }}</span>
           </div>
         </label>
       </div>
+
       <label for="np-mora" class="block">
         <span class="text-sm font-semibold text-slate-600">Mora por día de retraso</span>
         <input id="np-mora" v-model.number="form.mora_diaria" type="number" step="10" class="input mt-1" />
         <span class="text-xs text-slate-400">0 si no cobrarás mora</span>
       </label>
+
       <label for="np-notas" class="block">
         <span class="text-sm font-semibold text-slate-600">Notas privadas (opcional)</span>
         <textarea id="np-notas" v-model="form.notas" rows="2" class="input mt-1" placeholder="Ej: cliente puntual, vecina de la Sra. Rosa..."></textarea>
@@ -114,7 +142,7 @@ function fmt(n: number) { return '$' + Math.round(n).toLocaleString('es-MX'); }
     <div v-if="sim" class="card p-5 space-y-2 bg-gradient-to-br from-panda-50 to-white border-panda-200">
       <div class="text-sm font-bold text-panda-700 uppercase tracking-wider">Cálculo</div>
       <div class="flex justify-between text-sm">
-        <span class="text-slate-600">Interés mensual</span>
+        <span class="text-slate-600">Interés por {{ periodoLabel() }}</span>
         <span class="font-semibold">{{ fmt(sim.interes_mensual) }}</span>
       </div>
       <div class="flex justify-between text-lg border-t border-panda-100 pt-2">
@@ -128,6 +156,16 @@ function fmt(n: number) { return '$' + Math.round(n).toLocaleString('es-MX'); }
       <div class="flex justify-between text-sm border-t border-panda-100 pt-2">
         <span class="text-emerald-700 font-bold">Ganancia total</span>
         <span class="text-emerald-700 font-extrabold">{{ fmt(sim.ganancia_total) }}</span>
+      </div>
+      <!-- Fechas de pago -->
+      <div v-if="sim.pagos && sim.pagos.length" class="border-t border-panda-100 pt-2 mt-2">
+        <div class="text-xs text-slate-600 font-bold uppercase mb-1">Calendario</div>
+        <div class="text-xs text-slate-600 space-y-0.5">
+          <div v-for="p in sim.pagos" :key="p.numero_pago" class="flex justify-between">
+            <span>{{ p.numero_pago === 1 ? '🔒' : (p.numero_pago === sim.pagos.length ? '💵' : '📅') }} Pago {{ p.numero_pago }}</span>
+            <span>{{ new Date(p.fecha_programada).toLocaleDateString('es-MX', {day:'2-digit',month:'short',year:'2-digit'}) }} · {{ fmt(p.monto_esperado) }}</span>
+          </div>
+        </div>
       </div>
     </div>
 

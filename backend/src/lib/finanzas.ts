@@ -1,22 +1,26 @@
 /**
  * Cálculos del negocio PanditaCash.
  * Reglas:
- * - Se cobra el interés del primer mes por adelantado (retención al entregar)
- * - Meses intermedios: solo interés
- * - Último mes: principal completo (sin interés adicional)
- * - Mora diaria por cada día de retraso, mamá puede perdonar total o parcial
+ * - Se cobra el interés del primer periodo por adelantado (retención al entregar)
+ * - Periodos intermedios: solo interés
+ * - Último periodo: principal completo (sin interés adicional)
+ * - Mora diaria por cada día de retraso
+ * - Frecuencia: mensual (+1 mes) o quincenal (+15 días)
  */
+
+export type Frecuencia = 'mensual' | 'quincenal';
 
 export interface Prestamo {
   principal: number;
-  tasa_mensual: number;
-  plazo_meses: number;
+  tasa_mensual: number;     // Tasa POR PERIODO (mensual o quincenal según frecuencia)
+  plazo_meses: number;      // Número de PERIODOS totales
   mora_diaria: number;
   fecha_inicio: string | Date;
+  frecuencia: Frecuencia;
 }
 
 export interface CalculoPrestamo {
-  interes_mensual: number;
+  interes_mensual: number;   // Interés por periodo
   monto_entregado: number;
   total_a_pagar: number;
   ganancia_total: number;
@@ -29,8 +33,8 @@ export function calcularPrestamo(p: {
 }): CalculoPrestamo {
   const interes_mensual = p.principal * p.tasa_mensual;
   const monto_entregado = p.principal - interes_mensual;
-  const total_meses_interes = Math.max(0, p.plazo_meses - 2);
-  const total_a_pagar = interes_mensual * total_meses_interes + p.principal;
+  const total_periodos_interes = Math.max(0, p.plazo_meses - 2);
+  const total_a_pagar = interes_mensual * total_periodos_interes + p.principal;
   const ganancia_total = interes_mensual * (p.plazo_meses - 1);
   return { interes_mensual, monto_entregado, total_a_pagar, ganancia_total };
 }
@@ -43,11 +47,27 @@ export interface PagoProgramado {
   estado_inicial: 'pagado_anticipado' | 'pendiente';
 }
 
+/**
+ * Avanza una fecha según la frecuencia del préstamo.
+ *   mensual   → +1 mes
+ *   quincenal → +15 días
+ */
+export function siguienteFecha(base: Date, periodos: number, frecuencia: Frecuencia): Date {
+  const d = new Date(base);
+  if (frecuencia === 'quincenal') {
+    d.setDate(d.getDate() + 15 * periodos);
+  } else {
+    d.setMonth(d.getMonth() + periodos);
+  }
+  return d;
+}
+
 export function generarPagosProgramados(p: Prestamo): PagoProgramado[] {
   const { interes_mensual } = calcularPrestamo(p);
   const fechaInicio = new Date(p.fecha_inicio);
   const pagos: PagoProgramado[] = [];
 
+  // Pago 1: retenido al entregar (interés del periodo 1)
   pagos.push({
     numero_pago: 1,
     monto_esperado: interes_mensual,
@@ -56,24 +76,22 @@ export function generarPagosProgramados(p: Prestamo): PagoProgramado[] {
     estado_inicial: 'pagado_anticipado',
   });
 
+  // Pagos intermedios: solo interés
   for (let i = 2; i < p.plazo_meses; i++) {
-    const fecha = new Date(fechaInicio);
-    fecha.setMonth(fecha.getMonth() + i - 1);
     pagos.push({
       numero_pago: i,
       monto_esperado: interes_mensual,
-      fecha_programada: fecha,
+      fecha_programada: siguienteFecha(fechaInicio, i - 1, p.frecuencia),
       tipo: 'interes',
       estado_inicial: 'pendiente',
     });
   }
 
-  const ultimaFecha = new Date(fechaInicio);
-  ultimaFecha.setMonth(ultimaFecha.getMonth() + p.plazo_meses - 1);
+  // Último pago: principal completo
   pagos.push({
     numero_pago: p.plazo_meses,
     monto_esperado: p.principal,
-    fecha_programada: ultimaFecha,
+    fecha_programada: siguienteFecha(fechaInicio, p.plazo_meses - 1, p.frecuencia),
     tipo: 'principal',
     estado_inicial: 'pendiente',
   });
@@ -90,15 +108,10 @@ export function diasRetraso(fecha_programada: Date | string, hoy: Date = new Dat
   return Math.max(0, diff);
 }
 
-/** Mora acumulada bruta (sin perdones) al día de hoy. */
 export function moraAcumuladaBruta(fecha_programada: Date | string, mora_diaria: number, hoy: Date = new Date()): number {
   return diasRetraso(fecha_programada, hoy) * mora_diaria;
 }
 
-/**
- * Saldo pendiente de un pago considerando lo ya cobrado.
- * Retorna cuánto FALTA por cobrar dividido en capital + mora.
- */
 export function saldoPago(pg: {
   monto_esperado: number;
   monto_pagado_capital: number;
