@@ -22,7 +22,7 @@ export async function enviarWA(opts: {
         'Content-Type': 'application/json',
         'x-otp-secret': config.notif.otpSecret,
       },
-      body: JSON.stringify({ to: tel, message: opts.mensaje }),
+      body: JSON.stringify({ to: tel, message: opts.mensaje, app: 'panditacash' }),
     });
     if (r.ok) {
       ok = true;
