@@ -179,6 +179,18 @@ router.post('/', requireAdmin, async (req: any, res) => {
   res.json({ id: prestamo_id, ...calc, pagos: pagos.length });
 });
 
+/** GET /api/prestamos/lookup?telefono=... — busca cliente por teléfono y devuelve su score.
+ *  IMPORTANTE: debe ir ANTES del /:id para no matchear como id="lookup". */
+router.get('/lookup', requireAdmin, async (req, res) => {
+  const tel = normalizarTel(String(req.query.telefono ?? ''));
+  if (!tel) return res.status(400).json({ error: 'Teléfono requerido' });
+  const uR = await query('SELECT id, nombre, telefono FROM dbo.usuarios WHERE telefono = @t', { t: tel });
+  const u = uR.recordset[0];
+  if (!u) return res.json({ encontrado: false });
+  const score = await calcularScore(u.id);
+  res.json({ encontrado: true, cliente: u, score });
+});
+
 /** GET /api/prestamos/:id — detalle con pagos + movimientos */
 router.get('/:id', async (req: any, res) => {
   const id = Number(req.params.id);
@@ -322,17 +334,6 @@ router.post('/:id/cobrar', requireAdmin, async (req: any, res) => {
   await enviarWA({ telefono: pg.telefono, mensaje: msg, tipo: 'pago_registrado', ref_prestamo: prestamo_id, ref_pago: pago_id }).catch(() => {});
 
   res.json({ ok: true, liquidado, aplicadoCapital, aplicadoMora, sobrante, perdonada });
-});
-
-/** GET /api/prestamos/lookup?telefono=... — busca cliente por teléfono y devuelve su score */
-router.get('/lookup', requireAdmin, async (req, res) => {
-  const tel = normalizarTel(String(req.query.telefono ?? ''));
-  if (!tel) return res.status(400).json({ error: 'Teléfono requerido' });
-  const uR = await query('SELECT id, nombre, telefono FROM dbo.usuarios WHERE telefono = @t', { t: tel });
-  const u = uR.recordset[0];
-  if (!u) return res.json({ encontrado: false });
-  const score = await calcularScore(u.id);
-  res.json({ encontrado: true, cliente: u, score });
 });
 
 /** POST /api/prestamos/simular — cálculo previo */
