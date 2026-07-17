@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireAdmin } from '../lib/auth.js';
 import { calcularPrestamo, generarPagosProgramados, saldoPago } from '../lib/finanzas.js';
-import { enviarWA, normalizarTel } from '../lib/wa.js';
+import { notificar, normalizarTel } from '../lib/wa.js';
 import { calcularScore } from '../lib/score.js';
 
 const router = Router();
@@ -173,8 +173,12 @@ router.post('/', requireAdmin, async (req: any, res) => {
     }
   }
 
-  const msg = `🐼 PanditaCash\n\n¡Hola${nombre ? ` ${nombre}` : ''}! Tu préstamo fue aprobado.\n\n💰 Recibes: $${calc.monto_entregado.toLocaleString('es-MX')}\n📅 Plazo: ${p.plazo_meses} meses\n\nVe tu préstamo en:\nhttps://panditacash.5-78-222-255.sslip.io/mi-prestamo`;
-  await enviarWA({ telefono: tel, mensaje: msg, tipo: 'nuevo_prestamo', ref_prestamo: prestamo_id }).catch(() => {});
+  await notificar({
+    telefono: tel,
+    tipo: 'nuevo_prestamo',
+    data: { nombre: nombre || 'Cliente' },
+    ref_prestamo: prestamo_id,
+  }).catch(() => {});
 
   res.json({ id: prestamo_id, ...calc, pagos: pagos.length });
 });
@@ -330,8 +334,17 @@ router.post('/:id/cobrar', requireAdmin, async (req: any, res) => {
     );
   }
 
-  const msg = `🐼 PanditaCash\n\n✅ Confirmamos tu pago de $${Number(monto).toLocaleString('es-MX')}.\n\n${liquidado ? '🎉 ¡Terminaste tu préstamo, gracias!' : `Falta: $${(saldo.total_pendiente - aplicadoCapital - aplicadoMora).toLocaleString('es-MX')}`}`;
-  await enviarWA({ telefono: pg.telefono, mensaje: msg, tipo: 'pago_registrado', ref_prestamo: prestamo_id, ref_pago: pago_id }).catch(() => {});
+  await notificar({
+    telefono: pg.telefono,
+    tipo: 'pago_registrado',
+    data: {
+      nombre: pg.nombre,
+      monto: Number(monto),
+      folio: `PANDITA-${String(prestamo_id).padStart(3, '0')}`,
+    },
+    ref_prestamo: prestamo_id,
+    ref_pago: pago_id,
+  }).catch(() => {});
 
   res.json({ ok: true, liquidado, aplicadoCapital, aplicadoMora, sobrante, perdonada });
 });

@@ -116,8 +116,13 @@ router.post('/:id/responder', requireAdmin, async (req: any, res) => {
     { u: req.user.id, n: notas ?? null, pid: prestamo_id, id },
   );
 
-  const msg = `🐼 PanditaCash\n\n✅ ¡Aprobado! $${calc.monto_entregado.toLocaleString('es-MX')} listo para recoger.\n\n💰 Prestamos: $${p.principal.toLocaleString('es-MX')}\n📅 Plazo: ${p.plazo_meses} meses\n\nVe tu préstamo en la app.`;
-  await enviarWA({ telefono: s.telefono, mensaje: msg, tipo: 'solicitud_aprobada', ref_prestamo: prestamo_id }).catch(() => {});
+  const { notificar } = await import('../lib/wa.js');
+  await notificar({
+    telefono: s.telefono,
+    tipo: 'solicitud_aprobada',
+    data: { nombre: s.nombre },
+    ref_prestamo: prestamo_id,
+  }).catch(() => {});
 
   res.json({ ok: true, estado: 'aprobada', prestamo_id, ...calc });
 });

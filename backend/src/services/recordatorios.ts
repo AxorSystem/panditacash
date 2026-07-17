@@ -8,7 +8,7 @@
  * Usa dbo.notificaciones para no duplicar recordatorios el mismo día.
  */
 import { query } from '../db.js';
-import { enviarWA } from '../lib/wa.js';
+import { enviarWA, notificar } from '../lib/wa.js';
 import { moraAcumuladaBruta, diasRetraso } from '../lib/finanzas.js';
 
 const HORA_ENVIO = 9;  // 9am hora local
@@ -66,38 +66,52 @@ export async function ejecutarRecordatorios() {
     const total = capital_pend + Math.max(0, mora);
     if (total <= 0) continue;
 
-    // Caso 1: faltan 3 días
+    const folio = `PANDITA-${String(pg.prestamo_id).padStart(3, '0')}`;
+
+    // Caso 1: faltan 3 días → template
     if (diffDias === 3) {
       if (await yaEnviadoHoy('vence_pronto', pg.pago_id)) { saltados++; continue; }
-      const msg = `🐼 PanditaCash\n\nHola ${pg.cliente_nombre}, tu pago de ${fmt(total)} vence en 3 días (${fmtDia(pg.fecha_programada)}).\n\nContacta a la Sra. Panda para hacer tu abono.`;
-      const ok = await enviarWA({ telefono: pg.cliente_tel, mensaje: msg, tipo: 'vence_pronto', ref_pago: pg.pago_id, ref_prestamo: pg.prestamo_id });
+      const ok = await notificar({
+        telefono: pg.cliente_tel,
+        tipo: 'vence_pronto',
+        data: { nombre: pg.cliente_nombre, monto: total, fecha_str: fmtDia(pg.fecha_programada), folio },
+        ref_pago: pg.pago_id, ref_prestamo: pg.prestamo_id,
+      });
       if (ok.ok) enviados++;
     }
 
-    // Caso 2: vence hoy
+    // Caso 2: vence hoy → template
     else if (diffDias === 0) {
       if (await yaEnviadoHoy('vence_hoy', pg.pago_id)) { saltados++; continue; }
-      const msg = `🐼 PanditaCash\n\n📅 Hola ${pg.cliente_nombre}, HOY vence tu pago de ${fmt(total)}.\n\nContacta a la Sra. Panda para hacer tu abono y evitar mora.`;
-      const ok = await enviarWA({ telefono: pg.cliente_tel, mensaje: msg, tipo: 'vence_hoy', ref_pago: pg.pago_id, ref_prestamo: pg.prestamo_id });
+      const ok = await notificar({
+        telefono: pg.cliente_tel,
+        tipo: 'vence_hoy',
+        data: { nombre: pg.cliente_nombre, monto: total, fecha_str: 'hoy mismo', folio },
+        ref_pago: pg.pago_id, ref_prestamo: pg.prestamo_id,
+      });
       if (ok.ok) enviados++;
     }
 
-    // Caso 3: 1 día después del vencimiento — avisa a mamá
+    // Caso 3: 1 día después → alerta a mamá (freeform, mamá está en ventana)
     else if (diffDias === -1) {
       if (await yaEnviadoHoy('vencido_alerta_mama', pg.pago_id)) { saltados++; continue; }
       for (const m of mamas.recordset) {
-        const msg = `🐼 PanditaCash\n\n🚨 ${pg.cliente_nombre} no pagó ayer.\n\nDebe: ${fmt(total)}\nMora acumulándose: ${fmt(pg.mora_diaria)}/día\n\nCóbrale.`;
+        const msg = `🐼 PanditaCash\n\n🚨 ${pg.cliente_nombre} no pagó ayer.\n\nDebe: ${fmt(total)}\nMora sumando: ${fmt(pg.mora_diaria)}/día\n\nCóbrale.`;
         const ok = await enviarWA({ telefono: m.telefono, mensaje: msg, tipo: 'vencido_alerta_mama', ref_pago: pg.pago_id, ref_prestamo: pg.prestamo_id });
         if (ok.ok) enviados++;
       }
     }
 
-    // Caso 4: cada 7 días de atraso (semanal) — re-recordatorio al cliente + mamá
+    // Caso 4: cada 7 días de atraso → template al cliente
     else if (diffDias < -1 && Math.abs(diffDias) % 7 === 0) {
       if (await yaEnviadoHoy('vencido_semanal', pg.pago_id)) { saltados++; continue; }
       const dias = diasRetraso(pg.fecha_programada, new Date());
-      const msg = `🐼 PanditaCash\n\n⚠️ ${pg.cliente_nombre}, tu pago lleva ${dias} días atrasado.\n\nDebes ${fmt(total)} (incluye mora).\n\nContacta a la Sra. Panda urgente.`;
-      const ok = await enviarWA({ telefono: pg.cliente_tel, mensaje: msg, tipo: 'vencido_semanal', ref_pago: pg.pago_id, ref_prestamo: pg.prestamo_id });
+      const ok = await notificar({
+        telefono: pg.cliente_tel,
+        tipo: 'vencido_semanal',
+        data: { nombre: pg.cliente_nombre, monto: total, fecha_str: `vencido hace ${dias} días`, folio },
+        ref_pago: pg.pago_id, ref_prestamo: pg.prestamo_id,
+      });
       if (ok.ok) enviados++;
     }
   }
