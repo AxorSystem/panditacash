@@ -91,6 +91,7 @@ const filtrados = computed(() => {
             <span v-else class="text-xs text-slate-400">📄 {{ c.n_prestamos }} histórico{{ c.n_prestamos === 1 ? '' : 's' }}</span>
             <span v-if="c.vencidos > 0" class="chip-danger">🚨 {{ c.vencidos }} vencido{{ c.vencidos === 1 ? '' : 's' }}</span>
             <span v-else-if="c.atrasos_historicos > 0" class="text-xs text-amber-700">⏰ {{ c.atrasos_historicos }} atraso{{ c.atrasos_historicos === 1 ? '' : 's' }} antes</span>
+            <span v-else-if="c.n_prestamos > 0" class="text-xs text-emerald-700">✓ Puntual</span>
           </div>
         </div>
         <div v-if="c.saldo_real > 0" class="text-right">

@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import api from '@/lib/api';
 import { fmt, fmtDia, fmtHora } from '@/lib/format';
+import ScoreBadge from '@/components/ScoreBadge.vue';
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
@@ -44,6 +45,9 @@ const estadoBg: Record<string, string> = {
       <button @click="router.back()" class="text-panda-700 text-lg">←</button>
       <h1 class="text-xl font-extrabold flex-1 truncate">{{ data.cliente.nombre }}</h1>
     </div>
+
+    <!-- Score -->
+    <ScoreBadge v-if="data.score" :score="data.score" />
 
     <!-- Ficha del cliente -->
     <div class="card p-5 flex items-center gap-4">

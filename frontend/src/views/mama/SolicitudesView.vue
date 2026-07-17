@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import api from '@/lib/api';
+import ScoreBadge from '@/components/ScoreBadge.vue';
 
 const router = useRouter();
 const items = ref<any[]>([]);
@@ -12,6 +13,19 @@ const mora = ref(50);
 const frecuencia = ref<'mensual' | 'quincenal'>('mensual');
 const respNotas = ref('');
 const guardando = ref(false);
+const scoreSol = ref<any>(null);
+
+watch(seleccionada, async (s) => {
+  scoreSol.value = null;
+  if (!s) return;
+  try {
+    const r = await api.get('/prestamos/lookup', { params: { telefono: s.telefono } });
+    if (r.data.encontrado) {
+      scoreSol.value = r.data.score;
+      if (r.data.score.tasa_sugerida_pct > 0) tasa.value = r.data.score.tasa_sugerida_pct;
+    }
+  } catch {}
+});
 
 async function cargar() {
   cargando.value = true;
@@ -82,9 +96,13 @@ function fmtDia(d: string) { return new Date(d).toLocaleDateString('es-MX', { da
         </div>
         <div class="card p-4 bg-panda-50 border-panda-200">
           <div class="text-3xl font-extrabold text-panda-700">{{ fmt(seleccionada.monto_solicitado) }}</div>
-          <div class="text-sm text-slate-600 mt-1">📅 {{ seleccionada.plazo_meses }} meses</div>
+          <div class="text-sm text-slate-600 mt-1">📅 {{ seleccionada.plazo_meses }} periodos</div>
           <div v-if="seleccionada.motivo" class="text-sm italic mt-2">"{{ seleccionada.motivo }}"</div>
         </div>
+
+        <!-- Score del solicitante -->
+        <ScoreBadge v-if="scoreSol" :score="scoreSol" />
+
         <div class="text-sm font-bold text-slate-500 uppercase tracking-wider">Si apruebas</div>
         <div>
           <div class="text-sm font-semibold text-slate-600 mb-2">¿Cómo cobrará?</div>

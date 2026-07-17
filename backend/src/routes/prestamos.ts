@@ -3,6 +3,7 @@ import { query } from '../db.js';
 import { requireAuth, requireAdmin } from '../lib/auth.js';
 import { calcularPrestamo, generarPagosProgramados, saldoPago } from '../lib/finanzas.js';
 import { enviarWA, normalizarTel } from '../lib/wa.js';
+import { calcularScore } from '../lib/score.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -68,9 +69,12 @@ router.get('/dashboard', requireAdmin, async (req, res) => {
   res.json({ stats, pagos_pendientes: pagosEnriquecidos, solicitudes_pendientes: solicitudes.recordset });
 });
 
-/** POST /api/prestamos — admin crea préstamo directo */
+/** POST /api/prestamos — admin crea préstamo directo
+ *  Si el cliente está en score 'bloqueado' o excede su monto/activos máximos,
+ *  responde 409 con detalle. Si viene `override: true` en el body, ignora el score.
+ */
 router.post('/', requireAdmin, async (req: any, res) => {
-  const { telefono, nombre, principal, tasa_mensual, plazo_meses, mora_diaria, fecha_inicio, frecuencia, notas } = req.body ?? {};
+  const { telefono, nombre, principal, tasa_mensual, plazo_meses, mora_diaria, fecha_inicio, frecuencia, notas, override } = req.body ?? {};
   if (!telefono || !principal || !tasa_mensual || !plazo_meses)
     return res.status(400).json({ error: 'Faltan datos' });
   const frec = (frecuencia === 'quincenal') ? 'quincenal' : 'mensual';
@@ -88,6 +92,34 @@ router.post('/', requireAdmin, async (req: any, res) => {
     usuario_id = ins.recordset[0].id;
   } else {
     usuario_id = uR.recordset[0].id;
+  }
+
+  // Chequeo de score — bloquea automáticamente salvo override
+  if (!override) {
+    const score = await calcularScore(usuario_id);
+    if (score.nivel === 'bloqueado') {
+      return res.status(409).json({
+        error: 'Cliente bloqueado',
+        score,
+        motivo: score.razones.join('. '),
+        hint: 'Usa override:true si aún así quieres aprobar (bajo tu criterio)',
+      });
+    }
+    if (Number(principal) > score.monto_maximo_sugerido) {
+      return res.status(409).json({
+        error: `Excede el monto máximo sugerido para nivel ${score.nivel} (${score.emoji})`,
+        score,
+        monto_maximo: score.monto_maximo_sugerido,
+        hint: 'Reduce el monto o usa override:true',
+      });
+    }
+    if (score.prestamos_activos >= score.activos_maximos) {
+      return res.status(409).json({
+        error: `Cliente ya tiene ${score.prestamos_activos} préstamo(s) activo(s) — máximo para nivel ${score.nivel} es ${score.activos_maximos}`,
+        score,
+        hint: 'Espera a que liquide alguno o usa override:true',
+      });
+    }
   }
 
   const p = {
@@ -290,6 +322,17 @@ router.post('/:id/cobrar', requireAdmin, async (req: any, res) => {
   await enviarWA({ telefono: pg.telefono, mensaje: msg, tipo: 'pago_registrado', ref_prestamo: prestamo_id, ref_pago: pago_id }).catch(() => {});
 
   res.json({ ok: true, liquidado, aplicadoCapital, aplicadoMora, sobrante, perdonada });
+});
+
+/** GET /api/prestamos/lookup?telefono=... — busca cliente por teléfono y devuelve su score */
+router.get('/lookup', requireAdmin, async (req, res) => {
+  const tel = normalizarTel(String(req.query.telefono ?? ''));
+  if (!tel) return res.status(400).json({ error: 'Teléfono requerido' });
+  const uR = await query('SELECT id, nombre, telefono FROM dbo.usuarios WHERE telefono = @t', { t: tel });
+  const u = uR.recordset[0];
+  if (!u) return res.json({ encontrado: false });
+  const score = await calcularScore(u.id);
+  res.json({ encontrado: true, cliente: u, score });
 });
 
 /** POST /api/prestamos/simular — cálculo previo */

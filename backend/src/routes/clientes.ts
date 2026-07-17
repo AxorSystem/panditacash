@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireAdmin } from '../lib/auth.js';
 import { saldoPago } from '../lib/finanzas.js';
+import { calcularScore } from '../lib/score.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -99,7 +100,14 @@ router.get('/:id', async (req, res) => {
     { id },
   );
 
-  res.json({ cliente, prestamos: prR.recordset, movimientos: movR.recordset });
+  const score = await calcularScore(id);
+  res.json({ cliente, prestamos: prR.recordset, movimientos: movR.recordset, score });
+});
+
+/** GET /api/clientes/:id/score — solo el score */
+router.get('/:id/score', async (req, res) => {
+  const score = await calcularScore(Number(req.params.id));
+  res.json(score);
 });
 
 /** PATCH /api/clientes/:id — mamá edita notas o nombre */

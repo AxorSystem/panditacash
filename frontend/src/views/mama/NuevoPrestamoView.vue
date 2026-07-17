@@ -3,6 +3,7 @@ import { ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import api from '@/lib/api';
 import { fmt } from '@/lib/format';
+import ScoreBadge from '@/components/ScoreBadge.vue';
 
 const router = useRouter();
 
@@ -20,6 +21,9 @@ const form = ref({
 const sim = ref<any>(null);
 const guardando = ref(false);
 const error = ref('');
+const bloqueo = ref<any>(null);   // Respuesta 409 con score+motivo
+const scoreCliente = ref<any>(null);  // Cliente encontrado por lookup
+const lookupPending = ref(false);
 
 async function simular() {
   if (!form.value.principal || !form.value.tasa_mensual_pct || !form.value.plazo_meses) return;
@@ -36,7 +40,31 @@ async function simular() {
 
 watch(() => [form.value.principal, form.value.tasa_mensual_pct, form.value.plazo_meses, form.value.frecuencia], simular, { immediate: true });
 
-async function crear() {
+// Lookup del cliente cuando se completa el teléfono (10+ dígitos)
+let lookupTimer: any = null;
+watch(() => form.value.telefono, (tel) => {
+  scoreCliente.value = null;
+  clearTimeout(lookupTimer);
+  const clean = tel.replace(/\D/g, '');
+  if (clean.length < 10) return;
+  lookupTimer = setTimeout(async () => {
+    lookupPending.value = true;
+    try {
+      const r = await api.get('/prestamos/lookup', { params: { telefono: clean } });
+      if (r.data.encontrado) {
+        scoreCliente.value = r.data;
+        // Autocompleta nombre si existe
+        if (!form.value.nombre) form.value.nombre = r.data.cliente.nombre;
+        // Autoajusta tasa sugerida si score no es nuevo
+        if (r.data.score.nivel !== 'nuevo' && r.data.score.tasa_sugerida_pct > 0) {
+          form.value.tasa_mensual_pct = r.data.score.tasa_sugerida_pct;
+        }
+      }
+    } finally { lookupPending.value = false; }
+  }, 400);
+});
+
+async function crear(forzar = false) {
   if (!form.value.telefono || !form.value.nombre) { error.value = 'Falta teléfono y nombre'; return; }
   error.value = '';
   guardando.value = true;
@@ -50,11 +78,22 @@ async function crear() {
       frecuencia: form.value.frecuencia,
       mora_diaria: form.value.mora_diaria,
       notas: form.value.notas,
+      override: forzar,
     });
     router.push(`/mama/prestamo/${r.data.id}`);
   } catch (e: any) {
-    error.value = e.response?.data?.error ?? 'Error';
+    if (e.response?.status === 409) {
+      // Bloqueado por score — mostrar modal con opción a forzar
+      bloqueo.value = e.response.data;
+    } else {
+      error.value = e.response?.data?.error ?? 'Error';
+    }
   } finally { guardando.value = false; }
+}
+
+function forzarCreacion() {
+  bloqueo.value = null;
+  crear(true);
 }
 
 const periodoLabel = (): string => form.value.frecuencia === 'quincenal' ? 'quincena' : 'mes';
@@ -71,15 +110,25 @@ const periodoLabelPlural = (): string => form.value.frecuencia === 'quincenal' ?
     <!-- Cliente -->
     <div class="card p-5 space-y-3">
       <div class="text-sm font-bold text-slate-500 uppercase tracking-wider">Cliente</div>
+      <label for="np-tel" class="block">
+        <span class="text-sm font-semibold text-slate-600">WhatsApp (10 dígitos)</span>
+        <input id="np-tel" v-model="form.telefono" type="tel" inputmode="numeric" placeholder="55 XXXX XXXX" class="input mt-1" />
+        <div v-if="lookupPending" class="text-xs text-slate-400 mt-1">Buscando...</div>
+        <div v-else-if="scoreCliente?.encontrado" class="text-xs text-emerald-700 mt-1 font-bold">
+          ✓ Cliente existente: <b>{{ scoreCliente.cliente.nombre }}</b>
+        </div>
+        <div v-else-if="form.telefono.replace(/\D/g,'').length >= 10 && !lookupPending" class="text-xs text-blue-700 mt-1">
+          🆕 Cliente nuevo
+        </div>
+      </label>
       <label for="np-nombre" class="block">
         <span class="text-sm font-semibold text-slate-600">Nombre completo</span>
         <input id="np-nombre" v-model="form.nombre" placeholder="Ej: Liliana Martínez" class="input mt-1" />
       </label>
-      <label for="np-tel" class="block">
-        <span class="text-sm font-semibold text-slate-600">WhatsApp (10 dígitos)</span>
-        <input id="np-tel" v-model="form.telefono" type="tel" inputmode="numeric" placeholder="55 XXXX XXXX" class="input mt-1" />
-      </label>
     </div>
+
+    <!-- Score del cliente si existe -->
+    <ScoreBadge v-if="scoreCliente?.score" :score="scoreCliente.score" />
 
     <!-- Términos -->
     <div class="card p-5 space-y-3">
@@ -171,8 +220,30 @@ const periodoLabelPlural = (): string => form.value.frecuencia === 'quincenal' ?
 
     <p v-if="error" class="text-red-600 text-sm text-center bg-red-50 p-3 rounded-xl">{{ error }}</p>
 
-    <button @click="crear" :disabled="guardando" class="btn-primary w-full text-lg py-4">
+    <button @click="crear(false)" :disabled="guardando" class="btn-primary w-full text-lg py-4">
       {{ guardando ? 'Creando...' : '✓ Aprobar y crear préstamo' }}
     </button>
+
+    <!-- Modal de bloqueo por score -->
+    <div v-if="bloqueo" class="fixed inset-0 bg-black/50 z-40 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div class="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md p-6 space-y-4">
+        <div class="flex items-center gap-3">
+          <div class="text-4xl">⚠️</div>
+          <h3 class="text-xl font-extrabold text-red-700">Advertencia del sistema</h3>
+        </div>
+        <div class="bg-red-50 border border-red-200 rounded-xl p-3 text-sm">
+          <div class="font-bold text-red-800 mb-1">{{ bloqueo.error }}</div>
+          <div class="text-red-700">{{ bloqueo.motivo || bloqueo.hint }}</div>
+        </div>
+        <ScoreBadge v-if="bloqueo.score" :score="bloqueo.score" />
+        <div class="text-xs text-slate-600 bg-slate-50 rounded-xl p-3">
+          💡 Puedes ignorar el sistema y aprobar bajo tu criterio, pero considera si es riesgoso.
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <button @click="bloqueo = null" class="btn-secondary">Cancelar</button>
+          <button @click="forzarCreacion" class="btn-danger">Aprobar de todas formas</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
