@@ -6,6 +6,9 @@ import auth from './routes/auth.js';
 import prestamos from './routes/prestamos.js';
 import solicitudes from './routes/solicitudes.js';
 import mi from './routes/mi.js';
+import clientes from './routes/clientes.js';
+import movimientos from './routes/movimientos.js';
+import analytics from './routes/analytics.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -30,6 +33,9 @@ app.use('/api/auth', auth);
 app.use('/api/prestamos', prestamos);
 app.use('/api/solicitudes', solicitudes);
 app.use('/api/mi', mi);
+app.use('/api/clientes', clientes);
+app.use('/api/movimientos', movimientos);
+app.use('/api/analytics', analytics);
 
 app.use((req, res) => res.status(404).json({ error: 'ruta no encontrada' }));
 app.use((err: any, req: any, res: any, _next: any) => {

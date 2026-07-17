@@ -1,15 +1,13 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { requireAuth, requireAdmin } from '../lib/auth.js';
-import { calcularPrestamo, generarPagosProgramados, moraAcumulada, diasRetraso } from '../lib/finanzas.js';
+import { calcularPrestamo, generarPagosProgramados, saldoPago } from '../lib/finanzas.js';
 import { enviarWA, normalizarTel } from '../lib/wa.js';
 
 const router = Router();
 router.use(requireAuth);
 
-/**
- * GET /api/prestamos/dashboard   — admin ve estado global
- */
+/** GET /api/prestamos/dashboard   — admin ve estado global */
 router.get('/dashboard', requireAdmin, async (req, res) => {
   const hoy = new Date();
   hoy.setHours(0, 0, 0, 0);
@@ -21,17 +19,16 @@ router.get('/dashboard', requireAdmin, async (req, res) => {
            p.fecha_inicio, u.nombre, u.telefono
       FROM dbo.prestamos p
       JOIN dbo.usuarios u ON u.id = p.usuario_id
-     WHERE p.estado = 'activo'
-     ORDER BY p.fecha_inicio DESC`);
+     WHERE p.estado = 'activo'`);
 
   const pagosPend = await query(`
     SELECT pg.id, pg.prestamo_id, pg.numero_pago, pg.monto_esperado, pg.fecha_programada,
-           p.mora_diaria, u.nombre AS cliente_nombre, u.telefono AS cliente_tel,
-           p.principal, p.tasa_mensual, p.plazo_meses
+           pg.monto_pagado_capital, pg.monto_pagado_mora, pg.mora_perdonada_total,
+           p.mora_diaria, u.id AS usuario_id, u.nombre AS cliente_nombre, u.telefono AS cliente_tel
       FROM dbo.pagos pg
       JOIN dbo.prestamos p ON p.id = pg.prestamo_id
       JOIN dbo.usuarios u ON u.id = p.usuario_id
-     WHERE pg.estado = 'pendiente' AND p.estado = 'activo'
+     WHERE pg.estado IN ('pendiente', 'parcial') AND p.estado = 'activo'
      ORDER BY pg.fecha_programada ASC`);
 
   const solicitudes = await query(`
@@ -42,39 +39,36 @@ router.get('/dashboard', requireAdmin, async (req, res) => {
      WHERE s.estado = 'pendiente'
      ORDER BY s.created_at ASC`);
 
-  // Enriquece pagos con mora acumulada + estado urgencia
   const pagosEnriquecidos = pagosPend.recordset.map((p: any) => {
-    const dias = diasRetraso(p.fecha_programada, hoy);
-    const mora = moraAcumulada(p.fecha_programada, Number(p.mora_diaria), hoy);
-    const total = Number(p.monto_esperado) + mora;
-    let urgencia: 'vencido' | 'hoy' | 'pronto' | 'futuro';
+    const s = saldoPago(p, hoy);
     const f = new Date(p.fecha_programada);
     f.setHours(0, 0, 0, 0);
-    if (dias > 0) urgencia = 'vencido';
+    let urgencia: 'vencido' | 'hoy' | 'pronto' | 'futuro';
+    if (s.dias_retraso > 0) urgencia = 'vencido';
     else if (f.getTime() === hoy.getTime()) urgencia = 'hoy';
     else if (f.getTime() < en7.getTime()) urgencia = 'pronto';
     else urgencia = 'futuro';
-    return { ...p, dias_retraso: dias, mora_acumulada: mora, total_a_cobrar: total, urgencia };
+    return { ...p, ...s, urgencia };
   });
 
   const stats = {
     prestado_activo: activos.recordset.reduce((s: number, p: any) => s + Number(p.principal), 0),
-    por_cobrar_hoy: pagosEnriquecidos.filter((p) => p.urgencia === 'hoy').reduce((s, p) => s + p.total_a_cobrar, 0),
+    por_cobrar_hoy: pagosEnriquecidos.filter((p) => p.urgencia === 'hoy').reduce((s, p) => s + p.total_pendiente, 0),
     por_cobrar_hoy_n: pagosEnriquecidos.filter((p) => p.urgencia === 'hoy').length,
-    vencidos: pagosEnriquecidos.filter((p) => p.urgencia === 'vencido').reduce((s, p) => s + p.total_a_cobrar, 0),
+    vencidos: pagosEnriquecidos.filter((p) => p.urgencia === 'vencido').reduce((s, p) => s + p.total_pendiente, 0),
     vencidos_n: pagosEnriquecidos.filter((p) => p.urgencia === 'vencido').length,
-    proximos_7d: pagosEnriquecidos.filter((p) => p.urgencia === 'pronto').reduce((s, p) => s + p.total_a_cobrar, 0),
+    proximos_7d: pagosEnriquecidos.filter((p) => p.urgencia === 'pronto').reduce((s, p) => s + p.total_pendiente, 0),
     proximos_7d_n: pagosEnriquecidos.filter((p) => p.urgencia === 'pronto').length,
+    total_pendiente: pagosEnriquecidos.reduce((s, p) => s + p.total_pendiente, 0),
     solicitudes_pendientes: solicitudes.recordset.length,
+    prestamos_activos_n: activos.recordset.length,
+    clientes_activos_n: new Set(pagosEnriquecidos.map(p => p.usuario_id)).size,
   };
 
   res.json({ stats, pagos_pendientes: pagosEnriquecidos, solicitudes_pendientes: solicitudes.recordset });
 });
 
-/**
- * POST /api/prestamos   admin crea préstamo directo
- * body: { telefono, nombre?, principal, tasa_mensual, plazo_meses, mora_diaria?, fecha_inicio?, notas? }
- */
+/** POST /api/prestamos — admin crea préstamo directo */
 router.post('/', requireAdmin, async (req: any, res) => {
   const { telefono, nombre, principal, tasa_mensual, plazo_meses, mora_diaria, fecha_inicio, notas } = req.body ?? {};
   if (!telefono || !principal || !tasa_mensual || !plazo_meses)
@@ -82,7 +76,6 @@ router.post('/', requireAdmin, async (req: any, res) => {
 
   const tel = normalizarTel(telefono);
 
-  // Buscar/crear usuario
   let uR = await query('SELECT id, nombre FROM dbo.usuarios WHERE telefono = @t', { t: tel });
   let usuario_id: number;
   if (!uR.recordset[0]) {
@@ -119,42 +112,40 @@ router.post('/', requireAdmin, async (req: any, res) => {
   );
   const prestamo_id = insP.recordset[0].id;
 
-  // Genera pagos programados
   const pagos = generarPagosProgramados(p);
   for (const pg of pagos) {
-    await query(
-      `INSERT INTO dbo.pagos (prestamo_id, numero_pago, monto_esperado, fecha_programada, estado, monto_pagado, fecha_pagada)
+    const insPg = await query(
+      `INSERT INTO dbo.pagos (prestamo_id, numero_pago, monto_esperado, fecha_programada, estado, monto_pagado_capital, fecha_pagada)
+       OUTPUT INSERTED.id
        VALUES (@p, @n, @m, @f, @e, @mp, @fp)`,
       {
         p: prestamo_id, n: pg.numero_pago, m: pg.monto_esperado, f: pg.fecha_programada,
         e: pg.estado_inicial,
-        mp: pg.estado_inicial === 'pagado_anticipado' ? pg.monto_esperado : null,
+        mp: pg.estado_inicial === 'pagado_anticipado' ? pg.monto_esperado : 0,
         fp: pg.estado_inicial === 'pagado_anticipado' ? new Date() : null,
       },
     );
+    // Si es pagado_anticipado, crea el movimiento correspondiente
+    if (pg.estado_inicial === 'pagado_anticipado') {
+      await query(
+        `INSERT INTO dbo.movimientos (pago_id, prestamo_id, usuario_id, monto_capital, metodo, notas, registrado_por)
+         VALUES (@pg, @pr, @u, @m, 'retencion', @no, @rp)`,
+        {
+          pg: insPg.recordset[0].id, pr: prestamo_id, u: usuario_id,
+          m: pg.monto_esperado, no: 'Retenido al entregar el préstamo (interés mes 1)',
+          rp: req.user.id,
+        },
+      );
+    }
   }
 
-  // WA al cliente
   const msg = `🐼 PanditaCash\n\n¡Hola${nombre ? ` ${nombre}` : ''}! Tu préstamo fue aprobado.\n\n💰 Recibes: $${calc.monto_entregado.toLocaleString('es-MX')}\n📅 Plazo: ${p.plazo_meses} meses\n\nVe tu préstamo en:\nhttps://panditacash.5-78-222-255.sslip.io/mi-prestamo`;
   await enviarWA({ telefono: tel, mensaje: msg, tipo: 'nuevo_prestamo', ref_prestamo: prestamo_id }).catch(() => {});
 
   res.json({ id: prestamo_id, ...calc, pagos: pagos.length });
 });
 
-/** GET /api/prestamos/mios   cliente ve sus préstamos */
-router.get('/mios', async (req: any, res) => {
-  const r = await query(
-    `SELECT p.id, p.principal, p.tasa_mensual, p.plazo_meses, p.interes_mensual,
-            p.monto_entregado, p.mora_diaria, p.fecha_inicio, p.estado, p.notas
-       FROM dbo.prestamos p
-      WHERE p.usuario_id = @u
-      ORDER BY p.fecha_inicio DESC`,
-    { u: req.user.id },
-  );
-  res.json(r.recordset);
-});
-
-/** GET /api/prestamos/:id   detalle con pagos + urgencias */
+/** GET /api/prestamos/:id — detalle con pagos + movimientos */
 router.get('/:id', async (req: any, res) => {
   const id = Number(req.params.id);
   const pR = await query(
@@ -166,58 +157,67 @@ router.get('/:id', async (req: any, res) => {
   );
   const p = pR.recordset[0];
   if (!p) return res.status(404).json({ error: 'No existe' });
-
-  // Solo el dueño del préstamo o mamá pueden ver
   if (!req.user.es_admin && p.uid !== req.user.id)
     return res.status(403).json({ error: 'No autorizado' });
 
   const pagosR = await query(
-    `SELECT id, numero_pago, monto_esperado, fecha_programada, monto_pagado,
-            mora_calculada, mora_perdonada, fecha_pagada, estado, notas, comprobante_url
+    `SELECT id, numero_pago, monto_esperado, fecha_programada,
+            monto_pagado_capital, monto_pagado_mora, mora_perdonada_total,
+            fecha_pagada, estado, notas
        FROM dbo.pagos WHERE prestamo_id = @id ORDER BY numero_pago`,
+    { id },
+  );
+
+  const movR = await query(
+    `SELECT m.id, m.pago_id, m.monto_capital, m.monto_mora, m.mora_perdonada,
+            m.metodo, m.notas, m.fecha_pago, u.nombre AS registrado_por_nombre
+       FROM dbo.movimientos m
+       JOIN dbo.usuarios u ON u.id = m.registrado_por
+      WHERE m.prestamo_id = @id
+      ORDER BY m.fecha_pago DESC`,
     { id },
   );
 
   const hoy = new Date();
   hoy.setHours(0, 0, 0, 0);
-  const pagos = pagosR.recordset.map((pg: any) => {
-    const mora = pg.estado === 'pendiente'
-      ? moraAcumulada(pg.fecha_programada, Number(p.mora_diaria), hoy)
-      : 0;
-    const dias = pg.estado === 'pendiente'
-      ? diasRetraso(pg.fecha_programada, hoy)
-      : 0;
-    return {
-      ...pg,
-      mora_acumulada_hoy: mora,
-      dias_retraso: dias,
-      total_a_cobrar_hoy: Number(pg.monto_esperado) + mora,
-    };
+  const pagos = pagosR.recordset.map((pg: any) => ({
+    ...pg,
+    ...saldoPago({ ...pg, mora_diaria: p.mora_diaria }, hoy),
+  }));
+
+  const total_pagado_capital = pagos.reduce((s: number, pg: any) => s + Number(pg.monto_pagado_capital), 0);
+  const total_pagado_mora = pagos.reduce((s: number, pg: any) => s + Number(pg.monto_pagado_mora), 0);
+  const total_pendiente = pagos
+    .filter((pg: any) => pg.estado === 'pendiente' || pg.estado === 'parcial')
+    .reduce((s: number, pg: any) => s + pg.total_pendiente, 0);
+
+  const proximo = pagos.find((pg: any) => pg.estado === 'pendiente' || pg.estado === 'parcial');
+
+  res.json({
+    ...p,
+    pagos,
+    movimientos: movR.recordset,
+    total_pagado_capital,
+    total_pagado_mora,
+    total_pendiente,
+    proximo,
   });
-
-  const totalPagado = pagos
-    .filter((p) => p.estado === 'pagado' || p.estado === 'pagado_anticipado')
-    .reduce((s, p) => s + Number(p.monto_pagado ?? 0), 0);
-  const totalPendiente = pagos
-    .filter((p) => p.estado === 'pendiente')
-    .reduce((s, p) => s + p.total_a_cobrar_hoy, 0);
-
-  const proximo = pagos.find((p) => p.estado === 'pendiente');
-
-  res.json({ ...p, pagos, total_pagado: totalPagado, total_pendiente: totalPendiente, proximo });
 });
 
 /**
- * POST /api/prestamos/:id/pagar   admin registra un pago
- * body: { pago_id, monto_pagado, mora_perdonada?, comprobante_url?, notas? }
+ * POST /api/prestamos/:id/cobrar — mamá registra un cobro
+ * body: { pago_id, monto, mora_perdonada?, metodo?, notas? }
+ *
+ * El sistema aplica el monto primero a MORA pendiente, luego a CAPITAL del pago.
+ * Si sobra, sugiere aplicar al siguiente pago (o queda como sobrante).
  */
-router.post('/:id/pagar', requireAdmin, async (req: any, res) => {
+router.post('/:id/cobrar', requireAdmin, async (req: any, res) => {
   const prestamo_id = Number(req.params.id);
-  const { pago_id, monto_pagado, mora_perdonada, comprobante_url, notas } = req.body ?? {};
-  if (!pago_id || monto_pagado == null) return res.status(400).json({ error: 'Faltan datos' });
+  const { pago_id, monto, mora_perdonada, metodo, notas } = req.body ?? {};
+  if (!pago_id || monto == null) return res.status(400).json({ error: 'Faltan datos' });
 
   const pR = await query(
-    `SELECT pg.*, p.mora_diaria, p.principal, p.plazo_meses, u.telefono, u.nombre
+    `SELECT pg.*, p.mora_diaria, p.usuario_id, u.telefono, u.nombre
        FROM dbo.pagos pg
        JOIN dbo.prestamos p ON p.id = pg.prestamo_id
        JOIN dbo.usuarios u ON u.id = p.usuario_id
@@ -226,54 +226,71 @@ router.post('/:id/pagar', requireAdmin, async (req: any, res) => {
   );
   const pg = pR.recordset[0];
   if (!pg) return res.status(404).json({ error: 'Pago no encontrado' });
-  if (pg.estado !== 'pendiente') return res.status(400).json({ error: `El pago ya está en estado "${pg.estado}"` });
+  if (pg.estado === 'pagado' || pg.estado === 'pagado_anticipado')
+    return res.status(400).json({ error: 'Ese pago ya está saldado' });
 
-  const mora = moraAcumulada(pg.fecha_programada, Number(pg.mora_diaria), new Date());
-  const perdonada = Number(mora_perdonada) || 0;
+  const saldo = saldoPago({ ...pg, mora_diaria: pg.mora_diaria }, new Date());
+  const perdonada = Math.min(Number(mora_perdonada) || 0, saldo.mora_pendiente);
+  const mora_effective = saldo.mora_pendiente - perdonada;
 
+  const totalRecibido = Number(monto);
+  // Aplicar primero a mora, luego a capital
+  const aplicadoMora = Math.min(mora_effective, totalRecibido);
+  const aplicadoCapital = Math.min(saldo.capital_pendiente, totalRecibido - aplicadoMora);
+  const sobrante = totalRecibido - aplicadoMora - aplicadoCapital;
+
+  // Insert movimiento
   await query(
-    `UPDATE dbo.pagos SET
-       monto_pagado = @m,
-       mora_calculada = @mc,
-       mora_perdonada = @mp,
-       fecha_pagada = SYSUTCDATETIME(),
-       comprobante_url = @cu,
-       registrado_por = @rp,
-       notas = @no,
-       estado = 'pagado',
-       updated_at = SYSUTCDATETIME()
-     WHERE id = @id`,
+    `INSERT INTO dbo.movimientos
+       (pago_id, prestamo_id, usuario_id, monto_capital, monto_mora, mora_perdonada, metodo, notas, registrado_por)
+     VALUES (@pg, @pr, @u, @mc, @mm, @mp, @met, @no, @rp)`,
     {
-      m: Number(monto_pagado),
-      mc: mora, mp: perdonada,
-      cu: comprobante_url ?? null, rp: req.user.id, no: notas ?? null, id: pago_id,
+      pg: pago_id, pr: prestamo_id, u: pg.usuario_id,
+      mc: aplicadoCapital, mm: aplicadoMora, mp: perdonada,
+      met: metodo || 'efectivo', no: notas ?? null, rp: req.user.id,
     },
   );
 
-  // Si es el último pago, liquida el préstamo
+  // Actualiza acumulados en pagos
+  const nuevoCapital = Number(pg.monto_pagado_capital) + aplicadoCapital;
+  const nuevoMora = Number(pg.monto_pagado_mora) + aplicadoMora;
+  const nuevoPerdon = Number(pg.mora_perdonada_total) + perdonada;
+  const nuevoEstado =
+    nuevoCapital >= Number(pg.monto_esperado) ? 'pagado' : 'parcial';
+
+  await query(
+    `UPDATE dbo.pagos SET
+       monto_pagado_capital = @mc,
+       monto_pagado_mora = @mm,
+       mora_perdonada_total = @mp,
+       fecha_pagada = CASE WHEN @e = 'pagado' THEN SYSUTCDATETIME() ELSE fecha_pagada END,
+       estado = @e,
+       updated_at = SYSUTCDATETIME()
+     WHERE id = @id`,
+    { mc: nuevoCapital, mm: nuevoMora, mp: nuevoPerdon, e: nuevoEstado, id: pago_id },
+  );
+
+  // Si todos los pagos están saldados, liquida el préstamo
   const pend = await query(
-    `SELECT COUNT(*) AS n FROM dbo.pagos WHERE prestamo_id = @r AND estado = 'pendiente'`,
+    `SELECT COUNT(*) AS n FROM dbo.pagos
+      WHERE prestamo_id = @r AND estado IN ('pendiente', 'parcial')`,
     { r: prestamo_id },
   );
-  if (pend.recordset[0].n === 0) {
+  const liquidado = pend.recordset[0].n === 0;
+  if (liquidado) {
     await query(
       `UPDATE dbo.prestamos SET estado = 'liquidado', fecha_liquidacion = CAST(SYSUTCDATETIME() AS DATE) WHERE id = @id`,
       { id: prestamo_id },
     );
   }
 
-  // Notifica al cliente
-  const msg = `🐼 PanditaCash\n\n✅ Registrado tu pago de $${Number(monto_pagado).toLocaleString('es-MX')}.\n\nGracias, ${pg.nombre}.`;
+  const msg = `🐼 PanditaCash\n\n✅ Confirmamos tu pago de $${Number(monto).toLocaleString('es-MX')}.\n\n${liquidado ? '🎉 ¡Terminaste tu préstamo, gracias!' : `Falta: $${(saldo.total_pendiente - aplicadoCapital - aplicadoMora).toLocaleString('es-MX')}`}`;
   await enviarWA({ telefono: pg.telefono, mensaje: msg, tipo: 'pago_registrado', ref_prestamo: prestamo_id, ref_pago: pago_id }).catch(() => {});
 
-  res.json({ ok: true, liquidado: pend.recordset[0].n === 0 });
+  res.json({ ok: true, liquidado, aplicadoCapital, aplicadoMora, sobrante, perdonada });
 });
 
-/**
- * POST /api/prestamos/simular
- * body: { principal, tasa_mensual, plazo_meses }
- * Cálculo previo antes de aprobar
- */
+/** POST /api/prestamos/simular — cálculo previo */
 router.post('/simular', async (req, res) => {
   const { principal, tasa_mensual, plazo_meses } = req.body ?? {};
   if (!principal || !tasa_mensual || !plazo_meses) return res.status(400).json({ error: 'Faltan datos' });
@@ -290,6 +307,19 @@ router.post('/simular', async (req, res) => {
     fecha_inicio: new Date().toISOString().slice(0, 10),
   });
   res.json({ ...calc, pagos });
+});
+
+/** GET /api/prestamos/mios — cliente ve sus préstamos */
+router.get('/mios', async (req: any, res) => {
+  const r = await query(
+    `SELECT p.id, p.principal, p.tasa_mensual, p.plazo_meses, p.interes_mensual,
+            p.monto_entregado, p.mora_diaria, p.fecha_inicio, p.estado, p.notas
+       FROM dbo.prestamos p
+      WHERE p.usuario_id = @u
+      ORDER BY p.fecha_inicio DESC`,
+    { u: req.user.id },
+  );
+  res.json(r.recordset);
 });
 
 export default router;

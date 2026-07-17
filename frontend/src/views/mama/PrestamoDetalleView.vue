@@ -2,6 +2,7 @@
 import { ref, onMounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import api from '@/lib/api';
+import { fmt, fmtDia, fmtHora } from '@/lib/format';
 
 const props = defineProps<{ id: string }>();
 const router = useRouter();
@@ -9,8 +10,9 @@ const router = useRouter();
 const data = ref<any>(null);
 const cargando = ref(true);
 const pagoSel = ref<any>(null);
-const montoPagado = ref<number>(0);
+const monto = ref<number>(0);
 const moraPerdonada = ref<number>(0);
+const metodo = ref('efectivo');
 const notas = ref('');
 const guardando = ref(false);
 
@@ -22,20 +24,22 @@ async function cargar() {
 }
 onMounted(cargar);
 
-function abrirPago(pg: any) {
+function abrirCobro(pg: any) {
   pagoSel.value = pg;
-  montoPagado.value = Number(pg.total_a_cobrar_hoy);
+  monto.value = Number(pg.total_pendiente);
   moraPerdonada.value = 0;
+  metodo.value = 'efectivo';
   notas.value = '';
 }
 
-async function registrarPago() {
+async function registrarCobro() {
   guardando.value = true;
   try {
-    await api.post(`/prestamos/${props.id}/pagar`, {
+    await api.post(`/prestamos/${props.id}/cobrar`, {
       pago_id: pagoSel.value.id,
-      monto_pagado: montoPagado.value,
+      monto: monto.value,
       mora_perdonada: moraPerdonada.value,
+      metodo: metodo.value,
       notas: notas.value,
     });
     pagoSel.value = null;
@@ -49,110 +53,152 @@ const progreso = computed(() => {
   return Math.round((done / data.value.pagos.length) * 100);
 });
 
-function fmt(n: number) { return '$' + Math.round(n).toLocaleString('es-MX'); }
-function fmtDia(d: string) { return new Date(d).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' }); }
+const estadoIcon: Record<string, string> = {
+  pagado: '✅', pagado_anticipado: '🔒', pendiente: '⏳', parcial: '🟡',
+};
+const estadoLabel: Record<string, string> = {
+  pagado: 'Pagado', pagado_anticipado: 'Anticipado', pendiente: 'Pendiente', parcial: 'Parcial',
+};
 const estadoColor: Record<string, string> = {
   pagado: 'text-emerald-700', pagado_anticipado: 'text-emerald-700',
-  pendiente: 'text-amber-700', vencido: 'text-red-700',
-};
-const estadoIcon: Record<string, string> = {
-  pagado: '✅', pagado_anticipado: '💰', pendiente: '⏳', vencido: '🚨',
+  pendiente: 'text-amber-700', parcial: 'text-orange-700',
 };
 </script>
 
 <template>
   <div v-if="cargando" class="text-center py-20 text-slate-400">Cargando...</div>
-  <div v-else-if="data" class="px-4 py-4 pb-16 space-y-4">
+  <div v-else-if="data" class="px-4 py-4 space-y-4">
     <div class="flex items-center gap-3">
       <button @click="router.back()" class="text-panda-700 text-lg">←</button>
-      <div class="flex-1 min-w-0">
-        <h1 class="text-2xl font-extrabold truncate">{{ data.cliente_nombre }}</h1>
-        <div class="text-sm text-slate-500">📱 {{ data.cliente_tel }}</div>
-      </div>
+      <router-link :to="`/mama/cliente/${data.uid}`" class="flex-1 min-w-0">
+        <div class="text-xl font-extrabold truncate">{{ data.cliente_nombre }}</div>
+        <div class="text-xs text-slate-500 flex items-center gap-1">💬 {{ data.cliente_tel }}</div>
+      </router-link>
+      <span class="chip" :class="data.estado === 'activo' ? 'bg-panda-100 text-panda-800' : 'bg-emerald-100 text-emerald-700'">
+        {{ data.estado }}
+      </span>
     </div>
 
-    <!-- Resumen del préstamo -->
+    <!-- Resumen -->
     <div class="card p-5 space-y-2 bg-gradient-to-br from-panda-50 to-white border-panda-200">
       <div class="text-xs font-bold text-panda-700 uppercase tracking-wider">Préstamo</div>
       <div class="text-4xl font-extrabold">{{ fmt(data.principal) }}</div>
-      <div class="flex items-center gap-2 text-sm text-slate-600">
+      <div class="flex items-center gap-2 text-sm text-slate-600 flex-wrap">
         <span>📅 {{ data.plazo_meses }} meses</span>
         <span>·</span>
         <span>{{ (data.tasa_mensual * 100).toFixed(0) }}% / mes</span>
-        <span v-if="data.mora_diaria > 0">·</span>
-        <span v-if="data.mora_diaria > 0">🚨 {{ fmt(data.mora_diaria) }}/día</span>
+        <span v-if="Number(data.mora_diaria) > 0">·</span>
+        <span v-if="Number(data.mora_diaria) > 0">🚨 {{ fmt(data.mora_diaria) }}/día mora</span>
       </div>
+      <div class="text-xs text-slate-500">Inicio: {{ fmtDia(data.fecha_inicio) }}</div>
       <div class="h-2 bg-panda-100 rounded-full overflow-hidden mt-2">
-        <div class="h-full bg-gradient-to-r from-panda-500 to-panda-700 rounded-full" :style="{ width: progreso + '%' }"></div>
+        <div class="h-full bg-gradient-to-r from-panda-500 to-panda-700 rounded-full transition-all" :style="{ width: progreso + '%' }"></div>
       </div>
       <div class="flex justify-between text-xs text-slate-500 mt-1">
-        <span>Pagado {{ fmt(data.total_pagado) }}</span>
+        <span>Cobrado {{ fmt(Number(data.total_pagado_capital) + Number(data.total_pagado_mora)) }}</span>
         <span>Falta {{ fmt(data.total_pendiente) }}</span>
       </div>
     </div>
 
-    <!-- Próximo pago -->
-    <div v-if="data.proximo" class="card p-5 border-panda-300"
-      :class="data.proximo.dias_retraso > 0 ? 'bg-red-50 border-red-300' : 'bg-white'">
+    <!-- Próximo pago con botón cobrar -->
+    <div v-if="data.proximo" class="card p-5"
+      :class="data.proximo.dias_retraso > 0 ? 'bg-red-50 border-red-300' : 'bg-white border-panda-300'">
       <div class="text-xs font-bold uppercase tracking-wider" :class="data.proximo.dias_retraso > 0 ? 'text-red-700' : 'text-panda-700'">
-        {{ data.proximo.dias_retraso > 0 ? 'Vencido' : 'Próximo pago' }}
+        {{ data.proximo.dias_retraso > 0 ? '🚨 Debe pagarte' : 'Próximo pago' }}
       </div>
-      <div class="text-3xl font-extrabold mt-1">{{ fmt(data.proximo.total_a_cobrar_hoy) }}</div>
-      <div class="text-sm text-slate-600 mt-1">Programado: {{ fmtDia(data.proximo.fecha_programada) }}</div>
-      <div v-if="data.proximo.mora_acumulada_hoy > 0" class="text-sm text-red-600 mt-1">
-        Incluye {{ fmt(data.proximo.mora_acumulada_hoy) }} mora ({{ data.proximo.dias_retraso }} días)
+      <div class="text-3xl font-extrabold mt-1">{{ fmt(data.proximo.total_pendiente) }}</div>
+      <div class="text-sm text-slate-600 mt-1">
+        Programado: {{ fmtDia(data.proximo.fecha_programada) }}
       </div>
-      <button @click="abrirPago(data.proximo)" class="btn-primary w-full mt-4">💰 Registrar pago</button>
+      <div v-if="Number(data.proximo.monto_pagado_capital) > 0 || Number(data.proximo.monto_pagado_mora) > 0" class="text-sm text-orange-700 mt-1 font-bold">
+        Ya cobraste {{ fmt(Number(data.proximo.monto_pagado_capital) + Number(data.proximo.monto_pagado_mora)) }} de este pago
+      </div>
+      <div v-if="Number(data.proximo.mora_pendiente) > 0" class="text-sm text-red-600 mt-1">
+        Incluye {{ fmt(data.proximo.mora_pendiente) }} de mora ({{ data.proximo.dias_retraso }} días)
+      </div>
+      <button @click="abrirCobro(data.proximo)" class="btn-primary w-full mt-4 text-lg py-4">
+        💵 Cobrar
+      </button>
     </div>
 
-    <!-- Historial de pagos -->
+    <!-- Historial de pagos programados -->
     <div class="space-y-2">
-      <div class="text-sm font-bold text-slate-500 uppercase tracking-wider px-1 pt-2">Historial</div>
-      <div v-for="p in data.pagos" :key="p.id" class="card p-4 flex items-center gap-3">
+      <div class="text-sm font-bold text-slate-500 uppercase tracking-wider px-1">Pagos del préstamo</div>
+      <div v-for="p in data.pagos" :key="p.id" class="card p-3 flex items-center gap-3">
         <div class="text-2xl">{{ estadoIcon[p.estado] || '⏳' }}</div>
         <div class="flex-1 min-w-0">
           <div class="font-bold">Pago {{ p.numero_pago }} de {{ data.plazo_meses }}</div>
           <div class="text-xs text-slate-500">{{ fmtDia(p.fecha_programada) }}</div>
-          <div v-if="p.notas" class="text-xs text-slate-600 mt-1 italic truncate">{{ p.notas.split('\n')[0] }}</div>
+          <div v-if="p.estado === 'parcial'" class="text-xs text-orange-700 font-bold">
+            Falta {{ fmt(p.total_pendiente) }}
+          </div>
         </div>
         <div class="text-right">
-          <div class="font-extrabold" :class="estadoColor[p.estado] || 'text-slate-700'">
-            {{ fmt(p.monto_pagado || p.monto_esperado) }}
+          <div class="font-extrabold" :class="estadoColor[p.estado]">
+            {{ fmt(p.monto_esperado) }}
           </div>
-          <div class="text-xs uppercase font-bold" :class="estadoColor[p.estado]">
-            {{ p.estado === 'pagado_anticipado' ? 'ANTICIPADO' : p.estado.toUpperCase() }}
+          <div class="text-[10px] uppercase font-bold" :class="estadoColor[p.estado]">
+            {{ estadoLabel[p.estado] }}
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Modal registrar pago -->
-    <div v-if="pagoSel" class="fixed inset-0 bg-black/50 z-30 flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div class="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md p-6 space-y-4">
+    <!-- Historial de cobros de este préstamo -->
+    <div v-if="data.movimientos.length > 0" class="space-y-2">
+      <div class="text-sm font-bold text-slate-500 uppercase tracking-wider px-1">Cobros ({{ data.movimientos.length }})</div>
+      <div v-for="m in data.movimientos" :key="m.id" class="card p-3 flex items-center gap-3">
+        <div class="text-xl">💵</div>
+        <div class="flex-1 min-w-0">
+          <div class="font-bold">{{ fmt(Number(m.monto_capital) + Number(m.monto_mora)) }}</div>
+          <div class="text-xs text-slate-500">
+            {{ fmtHora(m.fecha_pago) }} · {{ m.metodo }}
+            <span v-if="Number(m.monto_mora) > 0"> · {{ fmt(m.monto_mora) }} mora</span>
+          </div>
+          <div v-if="m.notas" class="text-xs text-slate-600 italic truncate">"{{ m.notas }}"</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal cobrar -->
+    <div v-if="pagoSel" class="fixed inset-0 bg-black/50 z-40 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div class="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md p-6 space-y-4 max-h-[95vh] overflow-y-auto">
         <div class="flex justify-between items-center">
-          <h3 class="text-xl font-extrabold">Registrar pago</h3>
+          <h3 class="text-xl font-extrabold">Registrar cobro</h3>
           <button @click="pagoSel = null" class="text-slate-400 text-2xl">×</button>
         </div>
-        <div class="text-sm text-slate-600 space-y-1">
-          <div>Debía pagar: <b>{{ fmt(pagoSel.monto_esperado) }}</b></div>
-          <div v-if="pagoSel.mora_acumulada_hoy > 0" class="text-red-600">Mora acumulada: <b>{{ fmt(pagoSel.mora_acumulada_hoy) }}</b> ({{ pagoSel.dias_retraso }} días)</div>
-          <div class="font-bold pt-1">Total esperado: {{ fmt(pagoSel.total_a_cobrar_hoy) }}</div>
+        <div class="text-sm text-slate-600 space-y-1 bg-panda-50 rounded-xl p-3">
+          <div>Debe: <b>{{ fmt(pagoSel.capital_pendiente) }}</b> capital</div>
+          <div v-if="Number(pagoSel.mora_pendiente) > 0" class="text-red-600">
+            + <b>{{ fmt(pagoSel.mora_pendiente) }}</b> mora ({{ pagoSel.dias_retraso }} días)
+          </div>
+          <div class="font-extrabold pt-1 text-panda-700">Total esperado: {{ fmt(pagoSel.total_pendiente) }}</div>
         </div>
-        <label for="mp-monto" class="block">
-          <span class="text-sm font-semibold text-slate-600">¿Cuánto pagó?</span>
-          <input id="mp-monto" v-model.number="montoPagado" type="number" class="input mt-1 text-2xl font-bold" />
+        <label for="cob-monto" class="block">
+          <span class="text-sm font-semibold text-slate-600">¿Cuánto recibiste?</span>
+          <input id="cob-monto" v-model.number="monto" type="number" class="input mt-1 text-2xl font-bold text-center" />
+          <p class="text-xs text-slate-500 mt-1">Puedes cobrar menos si es un pago parcial.</p>
         </label>
-        <label v-if="pagoSel.mora_acumulada_hoy > 0" for="mp-mora" class="block">
-          <span class="text-sm font-semibold text-slate-600">Perdonar mora (opcional)</span>
-          <input id="mp-mora" v-model.number="moraPerdonada" type="number" class="input mt-1" :max="pagoSel.mora_acumulada_hoy" />
-          <span class="text-xs text-slate-400">Máximo: {{ fmt(pagoSel.mora_acumulada_hoy) }}</span>
+        <label v-if="Number(pagoSel.mora_pendiente) > 0" for="cob-mora" class="block">
+          <span class="text-sm font-semibold text-slate-600">¿Perdonar parte de la mora?</span>
+          <input id="cob-mora" v-model.number="moraPerdonada" type="number" class="input mt-1" :max="pagoSel.mora_pendiente" />
+          <p class="text-xs text-slate-500 mt-1">Máx: {{ fmt(pagoSel.mora_pendiente) }}</p>
         </label>
-        <label for="mp-notas" class="block">
+        <label for="cob-metodo" class="block">
+          <span class="text-sm font-semibold text-slate-600">Método</span>
+          <select id="cob-metodo" v-model="metodo" class="input mt-1">
+            <option value="efectivo">💵 Efectivo</option>
+            <option value="transferencia">💳 Transferencia</option>
+            <option value="deposito">🏧 Depósito</option>
+            <option value="otro">💰 Otro</option>
+          </select>
+        </label>
+        <label for="cob-notas" class="block">
           <span class="text-sm font-semibold text-slate-600">Notas (opcional)</span>
-          <input id="mp-notas" v-model="notas" placeholder="Ej: pagó en efectivo" class="input mt-1" />
+          <input id="cob-notas" v-model="notas" placeholder="Ej: pagó por Oxxo con recibo" class="input mt-1" />
         </label>
-        <button @click="registrarPago" :disabled="guardando" class="btn-primary w-full text-lg py-4">
-          {{ guardando ? 'Guardando...' : '✓ Confirmar pago' }}
+        <button @click="registrarCobro" :disabled="guardando" class="btn-primary w-full text-lg py-4">
+          {{ guardando ? 'Guardando...' : '✓ Confirmar cobro' }}
         </button>
       </div>
     </div>
