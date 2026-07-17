@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" width="1200" height="400">
+  <defs>
+    <linearGradient id="coin2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FDE68A"/>
+      <stop offset="50%" stop-color="#F59E0B"/>
+      <stop offset="100%" stop-color="#B45309"/>
+    </linearGradient>
+    <linearGradient id="coinInner2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FEF3C7"/>
+      <stop offset="100%" stop-color="#F59E0B"/>
+    </linearGradient>
+    <linearGradient id="face2" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#F5F0E6"/>
+    </linearGradient>
+    <linearGradient id="wordmark" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#F59E0B"/>
+      <stop offset="100%" stop-color="#B45309"/>
+    </linearGradient>
+  </defs>
+
+  <!-- ISOTIPO (panda + moneda) — mismo del logo pero escalado -->
+  <g transform="translate(0 0) scale(0.9)">
+    <g transform="translate(30 30)">
+      <!-- Moneda de fondo -->
+      <circle cx="200" cy="200" r="145" fill="url(#coin2)"/>
+      <circle cx="200" cy="200" r="145" fill="none" stroke="#B45309" stroke-width="4"/>
+      <circle cx="200" cy="200" r="128" fill="url(#coinInner2)" opacity="0.9"/>
+
+      <!-- Orejas -->
+      <ellipse cx="128" cy="110" rx="34" ry="38" fill="#2E2418"/>
+      <ellipse cx="272" cy="110" rx="34" ry="38" fill="#2E2418"/>
+      <ellipse cx="128" cy="118" rx="18" ry="20" fill="#F9A8A8" opacity="0.7"/>
+      <ellipse cx="272" cy="118" rx="18" ry="20" fill="#F9A8A8" opacity="0.7"/>
+
+      <!-- Cara -->
+      <ellipse cx="200" cy="205" rx="115" ry="108" fill="url(#face2)"/>
+      <ellipse cx="200" cy="205" rx="115" ry="108" fill="none" stroke="#2E2418" stroke-width="2.5"/>
+
+      <!-- Manchas ojos -->
+      <ellipse cx="152" cy="188" rx="30" ry="38" transform="rotate(-15 152 188)" fill="#1F1710"/>
+      <ellipse cx="248" cy="188" rx="30" ry="38" transform="rotate(15 248 188)" fill="#1F1710"/>
+
+      <!-- Ojos -->
+      <circle cx="156" cy="195" r="11" fill="#FFFFFF"/>
+      <circle cx="244" cy="195" r="11" fill="#FFFFFF"/>
+      <circle cx="159" cy="197" r="6" fill="#0F0A05"/>
+      <circle cx="241" cy="197" r="6" fill="#0F0A05"/>
+      <circle cx="161" cy="194" r="2" fill="#FFFFFF"/>
+      <circle cx="243" cy="194" r="2" fill="#FFFFFF"/>
+
+      <!-- Hocico -->
+      <ellipse cx="200" cy="238" rx="22" ry="15" fill="#F5F0E6"/>
+      <path d="M 190 232 Q 200 227 210 232 Q 200 244 190 232 Z" fill="#1F1710"/>
+
+      <!-- Sonrisa -->
+      <path d="M 200 244 Q 200 260 188 264" fill="none" stroke="#1F1710" stroke-width="2.5" stroke-linecap="round"/>
+      <path d="M 200 244 Q 200 260 212 264" fill="none" stroke="#1F1710" stroke-width="2.5" stroke-linecap="round"/>
+
+      <!-- Cachetitos -->
+      <ellipse cx="128" cy="228" rx="14" ry="10" fill="#F9A8A8" opacity="0.55"/>
+      <ellipse cx="272" cy="228" rx="14" ry="10" fill="#F9A8A8" opacity="0.55"/>
+
+      <!-- Moneda pequeña con $ -->
+      <g transform="translate(310 300)">
+        <circle r="42" fill="url(#coin2)" stroke="#B45309" stroke-width="3"/>
+        <circle r="34" fill="url(#coinInner2)"/>
+        <text x="0" y="14" font-family="'Nunito', 'Inter', system-ui, sans-serif" font-size="46" font-weight="800" text-anchor="middle" fill="#B45309">$</text>
+      </g>
+      <path d="M 268 268 Q 290 280 305 292 L 300 302 Q 280 288 260 278 Z" fill="#1F1710"/>
+    </g>
+  </g>
+
+  <!-- WORDMARK -->
+  <g transform="translate(430 205)">
+    <text x="0" y="0" font-family="'Nunito', 'Inter', system-ui, sans-serif" font-size="110" font-weight="800" letter-spacing="-4" fill="url(#wordmark)">
+      Pandita<tspan fill="#2E2418">Cash</tspan>
+    </text>
+    <text x="6" y="60" font-family="'Nunito', 'Inter', system-ui, sans-serif" font-size="26" font-weight="600" letter-spacing="1" fill="#7A6B5C">
+      Préstamos con corazón 🐼
+    </text>
+  </g>
+</svg>
