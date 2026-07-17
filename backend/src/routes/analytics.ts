@@ -45,15 +45,18 @@ router.get('/', async (req, res) => {
 
   // Top 5 clientes por deuda activa
   const topDeuda = await query(`
-    SELECT TOP 5
-      u.id, u.nombre,
-      SUM(p.principal) AS deuda_original,
-      SUM(p.principal - ISNULL((SELECT SUM(monto_capital) FROM dbo.movimientos WHERE prestamo_id = p.id), 0)) AS saldo_estimado
-    FROM dbo.prestamos p
-    JOIN dbo.usuarios u ON u.id = p.usuario_id
-    WHERE p.estado = 'activo'
-    GROUP BY u.id, u.nombre
-    ORDER BY saldo_estimado DESC`);
+    WITH pagos_por_prestamo AS (
+      SELECT p.id AS pid, p.usuario_id, p.principal,
+             ISNULL((SELECT SUM(monto_capital) FROM dbo.movimientos WHERE prestamo_id = p.id), 0) AS pagado
+        FROM dbo.prestamos p WHERE p.estado = 'activo'
+    )
+    SELECT TOP 5 u.id, u.nombre,
+           SUM(pp.principal) AS deuda_original,
+           SUM(pp.principal - pp.pagado) AS saldo_estimado
+      FROM pagos_por_prestamo pp
+      JOIN dbo.usuarios u ON u.id = pp.usuario_id
+     GROUP BY u.id, u.nombre
+     ORDER BY saldo_estimado DESC`);
 
   // Clientes con pagos atrasados actuales
   const enAtraso = await query(`
@@ -65,10 +68,10 @@ router.get('/', async (req, res) => {
 
   // Ganancia teórica pendiente (intereses futuros de préstamos activos)
   const ganPend = await query(`
-    SELECT ISNULL(SUM((p.interes_mensual * (p.plazo_meses - 1)) - m.pagado), 0) AS ganancia_pendiente
+    SELECT ISNULL(SUM(p.interes_mensual * (p.plazo_meses - 1)) - SUM(m.pagado_capital), 0) AS ganancia_pendiente
     FROM dbo.prestamos p
     OUTER APPLY (
-      SELECT ISNULL(SUM(monto_capital), 0) - p.principal AS pagado
+      SELECT ISNULL(SUM(monto_capital), 0) AS pagado_capital
       FROM dbo.movimientos WHERE prestamo_id = p.id
     ) m
     WHERE p.estado = 'activo'`);
