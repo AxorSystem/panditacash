@@ -84,6 +84,38 @@ router.post('/cliente/request-otp', async (req, res) => {
   res.json({ ok: true, sent_via: wa.ok ? 'whatsapp' : 'error', debug_code: wa.ok ? undefined : codigo });
 });
 
+/**
+ * POST /api/auth/cliente/emit-otp-for-tel
+ * Endpoint interno protegido con x-otp-secret. Consumido por el bot
+ * AxorCloud cuando un cliente le escribe "PANDITA" — el bot llama aquí,
+ * generamos el OTP, lo devolvemos, el bot lo envía freeform (que llega
+ * porque el cliente acaba de escribir → dentro de ventana 24h).
+ */
+router.post('/cliente/emit-otp-for-tel', async (req, res) => {
+  const secret = req.headers['x-otp-secret'];
+  const { OTP_SHARED_SECRET } = process.env;
+  if (!OTP_SHARED_SECRET || secret !== OTP_SHARED_SECRET) {
+    return res.status(401).json({ error: 'Secret inválido' });
+  }
+  const { telefono } = req.body ?? {};
+  if (!telefono) return res.status(400).json({ error: 'Teléfono requerido' });
+  const tel = normalizarTel(telefono);
+
+  const u = await query('SELECT id, nombre FROM dbo.usuarios WHERE telefono = @t AND activo = 1', { t: tel });
+  if (!u.recordset[0]) return res.status(404).json({ error: 'Teléfono no registrado' });
+
+  const codigo = generarOTP();
+  const expires = new Date(Date.now() + 5 * 60 * 1000);
+  await query(
+    `INSERT INTO dbo.otps (telefono, codigo, expires_at) VALUES (@t, @c, @e)`,
+    { t: tel, c: codigo, e: expires },
+  );
+
+  const primerNombre = String(u.recordset[0].nombre).split(' ')[0];
+  const mensaje = `🐼 PanditaCash\n\nHola ${primerNombre}, tu código de acceso es:\n\n*${codigo}*\n\nVence en 5 minutos. Regresa a la app e introdúcelo.`;
+  res.json({ codigo, mensaje, telefono: tel });
+});
+
 /** POST /api/auth/cliente/verify-otp  { telefono, codigo } */
 router.post('/cliente/verify-otp', async (req, res) => {
   const { telefono, codigo } = req.body ?? {};

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 
@@ -30,17 +30,30 @@ async function loginMama() {
   } finally { cargando.value = false; }
 }
 
-async function pedirOtp() {
+const BOT_WA = '525525034846';
+
+const waLink = computed(() => {
+  const tel = telefono.value.replace(/\D/g, '');
+  return `https://wa.me/${BOT_WA}?text=${encodeURIComponent(`PANDITA-${tel}`)}`;
+});
+
+async function registrarSiNuevo() {
   error.value = '';
   cargando.value = true;
   try {
-    const r = await auth.requestOtp(telefono.value, nombre.value);
-    mensajeEnvio.value = r.sent_via === 'whatsapp' ? '📱 Te enviamos un código por WhatsApp' : `Código de prueba: ${r.debug_code}`;
+    // Solo dispara para asegurar que el user exista en DB antes del WA
+    await auth.requestOtp(telefono.value, nombre.value);
     modo.value = 'cliente-otp';
+    const tel = telefono.value.replace(/\D/g, '');
+    mensajeEnvio.value = `✅ Abre WhatsApp con el botón y envía "PANDITA-${tel}". Recibirás tu código.`;
   } catch (e: any) {
     const msg = e.response?.data?.error ?? 'Error';
-    if (msg.includes('no está registrado')) requiereNombre.value = true;
-    error.value = msg;
+    if (msg.includes('no está registrado')) {
+      requiereNombre.value = true;
+      error.value = 'Escribe tu nombre para registrarte.';
+    } else {
+      error.value = msg;
+    }
   } finally { cargando.value = false; }
 }
 
@@ -101,7 +114,7 @@ async function validarOtp() {
       <button @click="modo = 'elegir'" class="text-panda-700 text-sm">← Cambiar</button>
       <div class="card p-6 space-y-4">
         <h2 class="text-xl font-bold text-center">Bienvenido</h2>
-        <p class="text-sm text-slate-500 text-center">Te enviaremos un código por WhatsApp.</p>
+        <p class="text-sm text-slate-500 text-center">Recibirás un código por WhatsApp.</p>
         <label for="tel-cli" class="block">
           <span class="text-sm font-semibold text-slate-600">Tu teléfono (10 dígitos)</span>
           <input id="tel-cli" v-model="telefono" type="tel" inputmode="numeric" placeholder="55 XXXX XXXX" class="input mt-1" />
@@ -111,8 +124,8 @@ async function validarOtp() {
           <input id="nom-cli" v-model="nombre" placeholder="Ej: Liliana Martínez" class="input mt-1" />
         </label>
         <p v-if="error" class="text-red-600 text-sm text-center">{{ error }}</p>
-        <button @click="pedirOtp" :disabled="cargando" class="btn-primary w-full">
-          {{ cargando ? 'Enviando...' : 'Enviarme el código' }}
+        <button @click="registrarSiNuevo" :disabled="cargando || telefono.replace(/\D/g,'').length < 10" class="btn-primary w-full">
+          {{ cargando ? 'Cargando...' : 'Continuar' }}
         </button>
       </div>
     </div>
@@ -121,16 +134,37 @@ async function validarOtp() {
     <div v-if="modo === 'cliente-otp'" class="space-y-4">
       <button @click="modo = 'cliente-tel'" class="text-panda-700 text-sm">← Cambiar teléfono</button>
       <div class="card p-6 space-y-4">
-        <h2 class="text-xl font-bold text-center">Código de acceso</h2>
-        <p v-if="mensajeEnvio" class="text-sm text-emerald-700 text-center bg-emerald-50 py-2 rounded-lg">{{ mensajeEnvio }}</p>
-        <label for="otp-cli" class="block">
-          <span class="text-sm font-semibold text-slate-600">Código de 6 dígitos</span>
-          <input id="otp-cli" v-model="otp" type="tel" inputmode="numeric" maxlength="6" placeholder="000000" class="input mt-1 text-center tracking-widest text-3xl" />
-        </label>
-        <p v-if="error" class="text-red-600 text-sm text-center">{{ error }}</p>
-        <button @click="validarOtp" :disabled="cargando" class="btn-primary w-full">
-          {{ cargando ? 'Validando...' : 'Entrar' }}
-        </button>
+        <h2 class="text-xl font-bold text-center">Recibe tu código</h2>
+
+        <!-- Paso 1: enviar mensaje al bot -->
+        <div class="space-y-2">
+          <div class="flex items-center gap-2">
+            <div class="w-6 h-6 rounded-full bg-panda-500 text-white flex items-center justify-center font-bold text-sm">1</div>
+            <span class="text-sm font-semibold text-slate-700">Abre WhatsApp y envía el mensaje</span>
+          </div>
+          <a :href="waLink" target="_blank" rel="noreferrer"
+             class="block w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-4 rounded-2xl text-center active:scale-[0.97] transition shadow-lg shadow-emerald-500/30">
+            💬 Abrir WhatsApp
+          </a>
+          <p class="text-xs text-slate-500 text-center">
+            Se abrirá con el mensaje "<b>PANDITA-{{ telefono.replace(/\D/g,'') }}</b>" precargado. Solo toca <b>Enviar</b> ↗
+          </p>
+        </div>
+
+        <!-- Paso 2: recibir código y meterlo -->
+        <div class="space-y-2 border-t border-panda-100 pt-4">
+          <div class="flex items-center gap-2">
+            <div class="w-6 h-6 rounded-full bg-panda-500 text-white flex items-center justify-center font-bold text-sm">2</div>
+            <span class="text-sm font-semibold text-slate-700">Escribe aquí el código que te llegó</span>
+          </div>
+          <label for="otp-cli" class="block">
+            <input id="otp-cli" v-model="otp" type="tel" inputmode="numeric" maxlength="6" placeholder="000000" class="input mt-1 text-center tracking-widest text-3xl" />
+          </label>
+          <p v-if="error" class="text-red-600 text-sm text-center">{{ error }}</p>
+          <button @click="validarOtp" :disabled="cargando || otp.length !== 6" class="btn-primary w-full">
+            {{ cargando ? 'Validando...' : 'Entrar' }}
+          </button>
+        </div>
       </div>
     </div>
   </div>
