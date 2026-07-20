@@ -5,12 +5,11 @@ const config: CapacitorConfig = {
   appName: 'PanditaCash',
   webDir: 'dist',
   bundledWebRuntime: false,
+  // Modo LOCAL: los assets van embebidos en el APK/IPA. La UI abre siempre
+  // (aunque no haya internet). Solo el API es remoto.
   server: {
-    // La app carga la web en producción — así los cambios de UI/backend no
-    // requieren reinstalar el APK/IPA. Si prefieres que la app funcione offline
-    // con los assets embebidos, comenta la línea de `url` y compila el webDir.
-    url: 'https://panditacash.5-78-222-255.sslip.io',
-    cleartext: false,
+    androidScheme: 'https',
+    iosScheme: 'capacitor',
   },
   plugins: {
     SplashScreen: {
