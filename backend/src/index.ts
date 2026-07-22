@@ -9,6 +9,7 @@ import mi from './routes/mi.js';
 import clientes from './routes/clientes.js';
 import movimientos from './routes/movimientos.js';
 import analytics from './routes/analytics.js';
+import kyc from './routes/kyc.js';
 import { iniciarScheduler, ejecutarRecordatorios } from './services/recordatorios.js';
 
 const app = express();
@@ -37,6 +38,7 @@ app.use('/api/mi', mi);
 app.use('/api/clientes', clientes);
 app.use('/api/movimientos', movimientos);
 app.use('/api/analytics', analytics);
+app.use('/api/kyc', kyc);
 
 /** Trigger manual del barrido de recordatorios (útil para pruebas). */
 app.post('/api/admin/recordatorios/run', async (req, res) => {
