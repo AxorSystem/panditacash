@@ -92,6 +92,13 @@ router.post('/', requireAdmin, async (req: any, res) => {
     usuario_id = ins.recordset[0].id;
   } else {
     usuario_id = uR.recordset[0].id;
+    // Si el admin proporcionó un nombre distinto al registrado, actualízalo.
+    const nombreExistente = String(uR.recordset[0].nombre || '').trim();
+    const nombreNuevo = String(nombre || '').trim();
+    if (nombreNuevo && nombreNuevo.toLowerCase() !== nombreExistente.toLowerCase()) {
+      await query(`UPDATE dbo.usuarios SET nombre = @n WHERE id = @id`,
+        { n: nombreNuevo, id: usuario_id });
+    }
   }
 
   // Chequeo de score — bloquea automáticamente salvo override
