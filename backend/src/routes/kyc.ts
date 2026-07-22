@@ -87,17 +87,27 @@ router.get('/status', async (req: any, res) => {
     { u: req.user.id },
   );
 
-  const tiposCompletos = new Set(docs.recordset.map((d: any) => d.tipo));
+  // Solo cuentan documentos VALIDADOS por mamá (validado=1)
+  const validados = new Set(docs.recordset.filter((d: any) => d.validado).map((d: any) => d.tipo));
+  const subidos = new Set(docs.recordset.map((d: any) => d.tipo));
+
+  const tieneIneValidado = validados.has('ine_frente') && validados.has('ine_reverso');
+  const tieneSelfieValidado = validados.has('selfie');
+  const enRevision = subidos.size > 0 && !tieneIneValidado;
+
   res.json({
     kyc_completo: !!u.recordset[0]?.kyc_completo,
+    en_revision: enRevision,
     documentos: docs.recordset,
-    tiene_ine: tiposCompletos.has('ine_frente') && tiposCompletos.has('ine_reverso'),
-    tiene_selfie: tiposCompletos.has('selfie'),
+    tiene_ine: tieneIneValidado,
+    tiene_selfie: tieneSelfieValidado,
+    ine_subido: subidos.has('ine_frente') && subidos.has('ine_reverso'),
+    selfie_subida: subidos.has('selfie'),
     avales_verificados: avales.recordset[0].n,
     tarjetas_activas: tarjetas.recordset[0].n,
     nivel_garantia: nivelGarantia({
-      ine: tiposCompletos.has('ine_frente') && tiposCompletos.has('ine_reverso'),
-      selfie: tiposCompletos.has('selfie'),
+      ine: tieneIneValidado,
+      selfie: tieneSelfieValidado,
       aval: avales.recordset[0].n > 0,
       tarjeta: tarjetas.recordset[0].n > 0,
     }),
@@ -109,13 +119,14 @@ router.post('/aval', async (req: any, res) => {
   const { nombre, telefono, relacion } = req.body ?? {};
   if (!nombre || !telefono) return res.status(400).json({ error: 'Faltan datos del aval' });
 
+  // MVP: marca el aval como verificado automáticamente (Fase 2 lo verifica por bot WhatsApp)
   const insR = await query(
-    `INSERT INTO dbo.avales (usuario_id, nombre, telefono, relacion)
-     OUTPUT INSERTED.id VALUES (@u, @n, @t, @r)`,
+    `INSERT INTO dbo.avales (usuario_id, nombre, telefono, relacion, verificado_wa, contactado_at)
+     OUTPUT INSERTED.id VALUES (@u, @n, @t, @r, 1, SYSUTCDATETIME())`,
     { u: req.user.id, n: nombre, t: telefono, r: relacion ?? null },
   );
 
-  // TODO Fase 2: contactar al aval por WhatsApp y esperar OK
+  await refreshKycCompleto(req.user.id);
   res.json({ ok: true, aval_id: insR.recordset[0].id });
 });
 
@@ -124,16 +135,95 @@ router.post('/tarjeta/token', async (_req, res) => {
   res.status(501).json({ error: 'Integración Mercado Pago pendiente de credentials' });
 });
 
-// Refresca campo usuarios.kyc_completo (INE + selfie + al menos 1 aval verificado)
+// -------- Endpoints para mamá (admin) ----------
+
+// GET /api/kyc/pendientes  → lista de clientes con KYC pendiente de validar
+router.get('/pendientes', async (req: any, res) => {
+  if (!req.user.es_admin) return res.status(403).json({ error: 'No autorizado' });
+  const r = await query(`
+    SELECT u.id, u.nombre, u.telefono, u.kyc_completo,
+           (SELECT COUNT(*) FROM dbo.documentos_kyc WHERE usuario_id=u.id) AS docs_subidos,
+           (SELECT COUNT(*) FROM dbo.documentos_kyc WHERE usuario_id=u.id AND validado=1) AS docs_validados,
+           (SELECT COUNT(*) FROM dbo.avales WHERE usuario_id=u.id) AS avales_n,
+           (SELECT MAX(created_at) FROM dbo.documentos_kyc WHERE usuario_id=u.id) AS ultima_subida
+      FROM dbo.usuarios u
+     WHERE u.es_admin = 0
+       AND EXISTS (SELECT 1 FROM dbo.documentos_kyc WHERE usuario_id=u.id AND validado=0)
+     ORDER BY ultima_subida DESC
+  `);
+  res.json(r.recordset);
+});
+
+// GET /api/kyc/cliente/:id  → docs de un cliente para revisar
+router.get('/cliente/:id', async (req: any, res) => {
+  if (!req.user.es_admin) return res.status(403).json({ error: 'No autorizado' });
+  const id = Number(req.params.id);
+  const docs = await query(
+    `SELECT id, tipo, mime_type, bytes, validado, validado_por, validado_at, notas, created_at
+       FROM dbo.documentos_kyc WHERE usuario_id=@u`,
+    { u: id },
+  );
+  const avales = await query(
+    `SELECT id, nombre, telefono, relacion, verificado_wa, contactado_at, created_at
+       FROM dbo.avales WHERE usuario_id=@u`,
+    { u: id },
+  );
+  const u = await query(
+    `SELECT id, nombre, telefono, kyc_completo, kyc_completed_at FROM dbo.usuarios WHERE id=@u`,
+    { u: id },
+  );
+  res.json({ usuario: u.recordset[0], documentos: docs.recordset, avales: avales.recordset });
+});
+
+// GET /api/kyc/documento/:id/imagen  → sirve la imagen (solo admin)
+router.get('/documento/:id/imagen', async (req: any, res) => {
+  if (!req.user.es_admin) return res.status(403).json({ error: 'No autorizado' });
+  const id = Number(req.params.id);
+  const d = await query(`SELECT ruta, mime_type FROM dbo.documentos_kyc WHERE id=@id`, { id });
+  const doc = d.recordset[0];
+  if (!doc) return res.status(404).json({ error: 'No existe' });
+  try {
+    const buf = await fs.readFile(doc.ruta);
+    res.setHeader('Content-Type', doc.mime_type);
+    res.setHeader('Cache-Control', 'private, max-age=60');
+    res.send(buf);
+  } catch {
+    res.status(404).json({ error: 'Archivo no encontrado' });
+  }
+});
+
+// POST /api/kyc/documento/:id/validar  { validado: bool, notas? }
+router.post('/documento/:id/validar', async (req: any, res) => {
+  if (!req.user.es_admin) return res.status(403).json({ error: 'No autorizado' });
+  const id = Number(req.params.id);
+  const { validado, notas } = req.body ?? {};
+
+  const d = await query(`SELECT usuario_id FROM dbo.documentos_kyc WHERE id=@id`, { id });
+  const doc = d.recordset[0];
+  if (!doc) return res.status(404).json({ error: 'No existe' });
+
+  await query(
+    `UPDATE dbo.documentos_kyc
+        SET validado=@v, validado_por=@p, validado_at=SYSUTCDATETIME(), notas=@n
+      WHERE id=@id`,
+    { v: validado ? 1 : 0, p: req.user.id, n: notas ?? null, id },
+  );
+
+  await refreshKycCompleto(doc.usuario_id);
+  res.json({ ok: true });
+});
+
+// Refresca campo usuarios.kyc_completo (INE + selfie VALIDADOS por mamá + al menos 1 aval)
 async function refreshKycCompleto(userId: number) {
   const chk = await query(
     `SELECT
-      (SELECT COUNT(DISTINCT tipo) FROM dbo.documentos_kyc WHERE usuario_id=@u AND tipo IN ('ine_frente','ine_reverso','selfie')) AS docs_n,
+      (SELECT COUNT(DISTINCT tipo) FROM dbo.documentos_kyc
+        WHERE usuario_id=@u AND tipo IN ('ine_frente','ine_reverso','selfie') AND validado=1) AS docs_validados_n,
       (SELECT COUNT(*) FROM dbo.avales WHERE usuario_id=@u AND verificado_wa=1) AS avales_n`,
     { u: userId },
   );
   const c = chk.recordset[0];
-  const completo = c.docs_n >= 3 && c.avales_n >= 1;
+  const completo = c.docs_validados_n >= 3 && c.avales_n >= 1;
   await query(
     `UPDATE dbo.usuarios SET kyc_completo=@c, kyc_completed_at=CASE WHEN @c=1 THEN SYSUTCDATETIME() ELSE NULL END WHERE id=@u`,
     { c: completo ? 1 : 0, u: userId },
