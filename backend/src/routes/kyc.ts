@@ -93,7 +93,11 @@ router.get('/status', async (req: any, res) => {
 
   const tieneIneValidado = validados.has('ine_frente') && validados.has('ine_reverso');
   const tieneSelfieValidado = validados.has('selfie');
-  const enRevision = subidos.size > 0 && !tieneIneValidado;
+  const ineSubido = subidos.has('ine_frente') && subidos.has('ine_reverso');
+  const selfieSubida = subidos.has('selfie');
+  // En revisión = todos los docs necesarios subidos pero no validados aún.
+  // Si faltan docs, el user debe poder continuar el flow (no bloquear).
+  const enRevision = ineSubido && selfieSubida && avales.recordset[0].n > 0 && !tieneIneValidado;
 
   res.json({
     kyc_completo: !!u.recordset[0]?.kyc_completo,
@@ -101,8 +105,8 @@ router.get('/status', async (req: any, res) => {
     documentos: docs.recordset,
     tiene_ine: tieneIneValidado,
     tiene_selfie: tieneSelfieValidado,
-    ine_subido: subidos.has('ine_frente') && subidos.has('ine_reverso'),
-    selfie_subida: subidos.has('selfie'),
+    ine_subido: ineSubido,
+    selfie_subida: selfieSubida,
     avales_verificados: avales.recordset[0].n,
     tarjetas_activas: tarjetas.recordset[0].n,
     nivel_garantia: nivelGarantia({
