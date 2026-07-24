@@ -377,6 +377,30 @@ router.post('/simular', async (req, res) => {
   res.json({ ...calc, pagos, frecuencia: frec });
 });
 
+/** GET /api/prestamos/:id/plantilla — devuelve un draft con los mismos términos para un nuevo préstamo */
+router.get('/:id/plantilla', requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const r = await query(
+    `SELECT p.principal, p.tasa_mensual, p.plazo_meses, p.mora_diaria, p.frecuencia,
+            u.telefono, u.nombre
+       FROM dbo.prestamos p
+       JOIN dbo.usuarios u ON u.id = p.usuario_id
+      WHERE p.id = @id`,
+    { id },
+  );
+  const row = r.recordset[0];
+  if (!row) return res.status(404).json({ error: 'No existe' });
+  res.json({
+    telefono: row.telefono,
+    nombre: row.nombre,
+    principal: Number(row.principal),
+    tasa_mensual: Number(row.tasa_mensual),
+    plazo_meses: Number(row.plazo_meses),
+    mora_diaria: Number(row.mora_diaria || 0),
+    frecuencia: row.frecuencia,
+  });
+});
+
 /** PATCH /api/prestamos/:id  { notas? } — edita notas del préstamo */
 router.patch('/:id', requireAdmin, async (req: any, res) => {
   const id = Number(req.params.id);
