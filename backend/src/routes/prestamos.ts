@@ -377,6 +377,26 @@ router.post('/simular', async (req, res) => {
   res.json({ ...calc, pagos, frecuencia: frec });
 });
 
+/** PATCH /api/prestamos/:id/reasignar  { usuario_id } — mueve préstamo a otro cliente */
+router.patch('/:id/reasignar', requireAdmin, async (req: any, res) => {
+  const id = Number(req.params.id);
+  const { usuario_id } = req.body ?? {};
+  if (!usuario_id) return res.status(400).json({ error: 'usuario_id requerido' });
+
+  const nuevo = await query(
+    `SELECT id, es_admin FROM dbo.usuarios WHERE id=@u`,
+    { u: Number(usuario_id) },
+  );
+  const u = nuevo.recordset[0];
+  if (!u) return res.status(404).json({ error: 'Cliente no encontrado' });
+  if (u.es_admin) return res.status(400).json({ error: 'No puedes reasignar a un admin' });
+
+  await query(`UPDATE dbo.prestamos SET usuario_id=@u WHERE id=@id`, { u: u.id, id });
+  await query(`UPDATE dbo.movimientos SET usuario_id=@u WHERE prestamo_id=@id`, { u: u.id, id });
+  await query(`UPDATE dbo.pagos SET usuario_id=@u WHERE prestamo_id=@id`, { u: u.id, id });
+  res.json({ ok: true });
+});
+
 /** GET /api/prestamos/mios — cliente ve sus préstamos */
 router.get('/mios', async (req: any, res) => {
   const r = await query(

@@ -60,4 +60,62 @@ router.get('/', async (req, res) => {
   });
 });
 
+/** DELETE /api/movimientos/:id — anula un cobro (revierte pago aplicado) */
+router.delete('/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  const r = await query(
+    `SELECT pago_id, monto_capital, monto_mora FROM dbo.movimientos WHERE id=@id`,
+    { id },
+  );
+  const mov = r.recordset[0];
+  if (!mov) return res.status(404).json({ error: 'No existe' });
+
+  await query(
+    `UPDATE dbo.pagos
+        SET monto_pagado_capital = ISNULL(monto_pagado_capital, 0) - @mc,
+            monto_pagado_mora    = ISNULL(monto_pagado_mora, 0) - @mm,
+            estado = 'pendiente'
+      WHERE id = @pid`,
+    { pid: mov.pago_id, mc: mov.monto_capital, mm: mov.monto_mora },
+  );
+  await query(`DELETE FROM dbo.movimientos WHERE id=@id`, { id });
+  res.json({ ok: true });
+});
+
+/** PATCH /api/movimientos/:id — edita monto o notas */
+router.patch('/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  const { monto_capital, monto_mora, notas, metodo } = req.body ?? {};
+
+  const cur = await query(
+    `SELECT pago_id, monto_capital AS mc0, monto_mora AS mm0 FROM dbo.movimientos WHERE id=@id`,
+    { id },
+  );
+  const m = cur.recordset[0];
+  if (!m) return res.status(404).json({ error: 'No existe' });
+
+  const nuevoMC = monto_capital != null ? Number(monto_capital) : m.mc0;
+  const nuevoMM = monto_mora != null ? Number(monto_mora) : m.mm0;
+  const dMC = nuevoMC - m.mc0;
+  const dMM = nuevoMM - m.mm0;
+
+  await query(
+    `UPDATE dbo.movimientos
+        SET monto_capital = @mc, monto_mora = @mm,
+            notas = COALESCE(@n, notas), metodo = COALESCE(@met, metodo)
+      WHERE id=@id`,
+    { id, mc: nuevoMC, mm: nuevoMM, n: notas ?? null, met: metodo ?? null },
+  );
+  if (dMC !== 0 || dMM !== 0) {
+    await query(
+      `UPDATE dbo.pagos
+          SET monto_pagado_capital = ISNULL(monto_pagado_capital, 0) + @dmc,
+              monto_pagado_mora    = ISNULL(monto_pagado_mora, 0) + @dmm
+        WHERE id=@pid`,
+      { pid: m.pago_id, dmc: dMC, dmm: dMM },
+    );
+  }
+  res.json({ ok: true });
+});
+
 export default router;
