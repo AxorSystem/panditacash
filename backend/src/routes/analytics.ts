@@ -8,6 +8,15 @@ router.use(requireAdmin);
 
 /** GET /api/analytics  — métricas para mamá */
 router.get('/', async (req, res) => {
+  // Rango opcional (desde, hasta) — solo filtra movimientos y ganancias.
+  const desde = String(req.query.desde ?? '').trim();
+  const hasta = String(req.query.hasta ?? '').trim();
+  const movWhere: string[] = [];
+  const movParams: any = {};
+  if (desde) { movWhere.push('fecha_pago >= @desde'); movParams.desde = desde; }
+  if (hasta) { movWhere.push('fecha_pago < DATEADD(day, 1, @hasta)'); movParams.hasta = hasta; }
+  const movWhereSql = movWhere.length ? `WHERE ${movWhere.join(' AND ')}` : '';
+
   // Totales generales
   const tot = await query(`
     SELECT
@@ -24,24 +33,27 @@ router.get('/', async (req, res) => {
       ISNULL(SUM(monto_mora), 0) AS total_cobrado_mora,
       ISNULL(SUM(mora_perdonada), 0) AS total_mora_perdonada,
       COUNT(*) AS n_movimientos
-    FROM dbo.movimientos`);
+    FROM dbo.movimientos ${movWhereSql}`, movParams);
 
   const clientes = await query(`
     SELECT COUNT(DISTINCT usuario_id) AS clientes_totales
     FROM dbo.prestamos`);
 
-  // Ganancia mes a mes (últimos 12 meses)
+  // Ganancia mes a mes: usa el rango si viene, sino últimos 12 meses.
+  const porMesWhere = movWhere.length
+    ? `WHERE ${movWhere.join(' AND ')}`
+    : `WHERE fecha_pago >= DATEADD(month, -12, GETUTCDATE())`;
   const porMes = await query(`
     SELECT
-      YEAR(m.fecha_pago) AS anio,
-      MONTH(m.fecha_pago) AS mes,
-      SUM(m.monto_capital) AS capital,
-      SUM(m.monto_mora) AS mora,
+      YEAR(fecha_pago) AS anio,
+      MONTH(fecha_pago) AS mes,
+      SUM(monto_capital) AS capital,
+      SUM(monto_mora) AS mora,
       COUNT(*) AS movimientos
-    FROM dbo.movimientos m
-    WHERE m.fecha_pago >= DATEADD(month, -12, GETUTCDATE())
-    GROUP BY YEAR(m.fecha_pago), MONTH(m.fecha_pago)
-    ORDER BY anio, mes`);
+    FROM dbo.movimientos
+    ${porMesWhere}
+    GROUP BY YEAR(fecha_pago), MONTH(fecha_pago)
+    ORDER BY anio, mes`, movParams);
 
   // Top 5 clientes por deuda activa
   const topDeuda = await query(`

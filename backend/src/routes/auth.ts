@@ -52,6 +52,52 @@ router.post('/mama/change-pin', async (req: any, res) => {
   res.json({ ok: true });
 });
 
+/** POST /api/auth/mama/request-pin-reset  { telefono } — envía OTP para recuperación */
+router.post('/mama/request-pin-reset', async (req, res) => {
+  const { telefono } = req.body ?? {};
+  if (!telefono) return res.status(400).json({ error: 'Teléfono requerido' });
+  const tel = normalizarTel(String(telefono));
+  const r = await query(
+    `SELECT id, telefono FROM dbo.usuarios WHERE telefono = @t AND es_admin = 1`,
+    { t: tel },
+  );
+  if (!r.recordset[0]) return res.status(404).json({ error: 'No encontrado' });
+
+  const codigo = generarOTP();
+  const expires = new Date(Date.now() + 5 * 60 * 1000);
+  await query(
+    `INSERT INTO dbo.otps (telefono, codigo, expires_at) VALUES (@t, @c, @e)`,
+    { t: tel, c: codigo, e: expires },
+  );
+  const msg = `🐼 PanditaCash\n\nCódigo para reset PIN: ${codigo}\n\nVence en 5 minutos. Si no fuiste tú, ignora este mensaje.`;
+  const wa = await enviarWA({ telefono: tel, mensaje: msg, tipo: 'pin_reset' });
+  res.json({ ok: true, sent_via: wa.ok ? 'whatsapp' : 'error', debug_code: wa.ok ? undefined : codigo });
+});
+
+/** POST /api/auth/mama/verify-pin-reset  { telefono, codigo, pin_nuevo } */
+router.post('/mama/verify-pin-reset', async (req, res) => {
+  const { telefono, codigo, pin_nuevo } = req.body ?? {};
+  if (!telefono || !codigo || !pin_nuevo) return res.status(400).json({ error: 'Faltan datos' });
+  if (String(pin_nuevo).length < 4) return res.status(400).json({ error: 'PIN mín 4 dígitos' });
+  const tel = normalizarTel(String(telefono));
+
+  const otpR = await query(
+    `SELECT TOP 1 id FROM dbo.otps
+      WHERE telefono=@t AND codigo=@c AND used=0 AND expires_at > SYSUTCDATETIME()
+      ORDER BY id DESC`,
+    { t: tel, c: String(codigo) },
+  );
+  if (!otpR.recordset[0]) return res.status(401).json({ error: 'Código inválido o vencido' });
+
+  const nuevo = await bcrypt.hash(String(pin_nuevo), 12);
+  await query(
+    `UPDATE dbo.usuarios SET pin_hash=@p WHERE telefono=@t AND es_admin=1`,
+    { p: nuevo, t: tel },
+  );
+  await query(`UPDATE dbo.otps SET used=1 WHERE id=@id`, { id: otpR.recordset[0].id });
+  res.json({ ok: true });
+});
+
 /** POST /api/auth/cliente/request-otp  { telefono, nombre? } */
 router.post('/cliente/request-otp', async (req, res) => {
   const { telefono, nombre } = req.body ?? {};
