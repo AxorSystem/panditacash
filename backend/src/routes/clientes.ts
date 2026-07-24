@@ -13,7 +13,7 @@ router.get('/', async (req, res) => {
   const buscar = String(req.query.buscar ?? '').trim();
 
   const r = await query(
-    `SELECT u.id, u.nombre, u.telefono, u.notas, u.created_at,
+    `SELECT u.id, u.nombre, u.telefono, u.notas, u.created_at, u.tags,
             (SELECT COUNT(*) FROM dbo.prestamos WHERE usuario_id = u.id) AS n_prestamos,
             (SELECT COUNT(*) FROM dbo.prestamos WHERE usuario_id = u.id AND estado = 'activo') AS activos,
             (SELECT ISNULL(SUM(principal), 0) FROM dbo.prestamos WHERE usuario_id = u.id AND estado = 'activo') AS deuda_original,
@@ -70,7 +70,7 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   const id = Number(req.params.id);
   const uR = await query(
-    `SELECT id, nombre, telefono, notas, created_at, last_login
+    `SELECT id, nombre, telefono, notas, tags, created_at, last_login
        FROM dbo.usuarios WHERE id = @id AND es_admin = 0`,
     { id },
   );
@@ -108,6 +108,20 @@ router.get('/:id', async (req, res) => {
 router.get('/:id/score', async (req, res) => {
   const score = await calcularScore(Number(req.params.id));
   res.json(score);
+});
+
+/** PUT /api/clientes/:id/tags  { tags: string[] } */
+router.put('/:id/tags', async (req: any, res) => {
+  if (!req.user.es_admin) return res.status(403).json({ error: 'No autorizado' });
+  const id = Number(req.params.id);
+  const rawTags = Array.isArray(req.body?.tags) ? req.body.tags : [];
+  const clean = rawTags
+    .map((t: any) => String(t).trim().toLowerCase())
+    .filter((t: string) => t.length > 0 && t.length <= 24)
+    .slice(0, 8)
+    .join(',');
+  await query(`UPDATE dbo.usuarios SET tags=@t WHERE id=@id`, { id, t: clean || null });
+  res.json({ ok: true, tags: clean.split(',').filter(Boolean) });
 });
 
 /** PATCH /api/clientes/:id — mamá edita notas o nombre */
