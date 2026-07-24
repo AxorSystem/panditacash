@@ -81,4 +81,33 @@ router.get('/resumen', async (req: any, res) => {
   });
 });
 
+/** GET /api/mi/notificaciones — historial de mensajes enviados al user */
+router.get('/notificaciones', async (req: any, res) => {
+  const uid = req.user.id;
+  const u = await query(`SELECT telefono FROM dbo.usuarios WHERE id=@u`, { u: uid });
+  const tel = u.recordset[0]?.telefono;
+  if (!tel) return res.json([]);
+
+  // Admin: recibe TODAS las notifs del sistema
+  if (req.user.es_admin) {
+    const r = await query(
+      `SELECT TOP 100 id, telefono, tipo, canal, mensaje, ref_prestamo, ref_pago,
+              enviado_at, exito
+         FROM dbo.notificaciones
+        ORDER BY enviado_at DESC`,
+    );
+    return res.json(r.recordset);
+  }
+
+  const r = await query(
+    `SELECT TOP 50 id, tipo, canal, mensaje, ref_prestamo, ref_pago,
+            enviado_at, exito
+       FROM dbo.notificaciones
+      WHERE telefono = @t
+      ORDER BY enviado_at DESC`,
+    { t: tel },
+  );
+  res.json(r.recordset);
+});
+
 export default router;
