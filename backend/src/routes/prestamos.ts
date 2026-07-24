@@ -377,6 +377,14 @@ router.post('/simular', async (req, res) => {
   res.json({ ...calc, pagos, frecuencia: frec });
 });
 
+/** PATCH /api/prestamos/:id  { notas? } — edita notas del préstamo */
+router.patch('/:id', requireAdmin, async (req: any, res) => {
+  const id = Number(req.params.id);
+  const { notas } = req.body ?? {};
+  await query(`UPDATE dbo.prestamos SET notas=@n WHERE id=@id`, { id, n: notas ?? null });
+  res.json({ ok: true });
+});
+
 /** PATCH /api/prestamos/:id/reasignar  { usuario_id } — mueve préstamo a otro cliente */
 router.patch('/:id/reasignar', requireAdmin, async (req: any, res) => {
   const id = Number(req.params.id);
