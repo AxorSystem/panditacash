@@ -60,6 +60,7 @@ app.use((err: any, req: any, res: any, _next: any) => {
 
 try {
   await getPool();
+  await ensureSchemaUpgrades();
   app.listen(config.port, () => {
     console.log(`🐼 PanditaCash backend en :${config.port}`);
     iniciarScheduler();
@@ -67,4 +68,16 @@ try {
 } catch (e: any) {
   console.error('✗ No se pudo conectar a SQL Server:', e.message);
   process.exit(1);
+}
+
+/** Migraciones idempotentes que corren en cada arranque. */
+async function ensureSchemaUpgrades() {
+  try {
+    await query(`
+      IF COL_LENGTH('dbo.usuarios', 'tags') IS NULL
+        ALTER TABLE dbo.usuarios ADD tags NVARCHAR(500) NULL;
+    `);
+  } catch (e: any) {
+    console.warn('[schema] no se pudo aplicar upgrade tags:', e.message);
+  }
 }

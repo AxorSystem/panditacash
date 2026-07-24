@@ -102,4 +102,32 @@ router.get('/', async (req, res) => {
   });
 });
 
+/** GET /api/analytics/actividad — feed unificado de eventos recientes */
+router.get('/actividad', async (_req, res) => {
+  const limit = 40;
+  const eventos = await query(`
+    SELECT TOP (@limit) * FROM (
+      SELECT 'prestamo' AS tipo, p.id AS ref_id, p.fecha_inicio AS fecha,
+             u.nombre AS cliente_nombre, p.principal AS monto,
+             p.estado AS estado, NULL AS metodo, NULL AS notas
+        FROM dbo.prestamos p
+        JOIN dbo.usuarios u ON u.id = p.usuario_id
+      UNION ALL
+      SELECT 'cobro' AS tipo, m.id AS ref_id, m.fecha_pago AS fecha,
+             u.nombre AS cliente_nombre, (m.monto_capital + m.monto_mora) AS monto,
+             NULL AS estado, m.metodo, m.notas
+        FROM dbo.movimientos m
+        JOIN dbo.usuarios u ON u.id = m.usuario_id
+      UNION ALL
+      SELECT 'solicitud' AS tipo, s.id AS ref_id, s.created_at AS fecha,
+             u.nombre AS cliente_nombre, s.monto_solicitado AS monto,
+             s.estado AS estado, NULL AS metodo, s.motivo AS notas
+        FROM dbo.solicitudes s
+        JOIN dbo.usuarios u ON u.id = s.usuario_id
+    ) x
+    ORDER BY fecha DESC
+  `, { limit });
+  res.json(eventos.recordset);
+});
+
 export default router;
