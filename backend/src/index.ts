@@ -80,4 +80,12 @@ async function ensureSchemaUpgrades() {
   } catch (e: any) {
     console.warn('[schema] no se pudo aplicar upgrade tags:', e.message);
   }
+  try {
+    await query(`
+      IF COL_LENGTH('dbo.usuarios', 'favorito') IS NULL
+        ALTER TABLE dbo.usuarios ADD favorito BIT NOT NULL DEFAULT 0;
+    `);
+  } catch (e: any) {
+    console.warn('[schema] no se pudo aplicar upgrade favorito:', e.message);
+  }
 }

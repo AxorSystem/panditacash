@@ -13,7 +13,7 @@ router.get('/', async (req, res) => {
   const buscar = String(req.query.buscar ?? '').trim();
 
   const r = await query(
-    `SELECT u.id, u.nombre, u.telefono, u.notas, u.created_at, u.tags,
+    `SELECT u.id, u.nombre, u.telefono, u.notas, u.created_at, u.tags, u.favorito,
             (SELECT COUNT(*) FROM dbo.prestamos WHERE usuario_id = u.id) AS n_prestamos,
             (SELECT COUNT(*) FROM dbo.prestamos WHERE usuario_id = u.id AND estado = 'activo') AS activos,
             (SELECT ISNULL(SUM(principal), 0) FROM dbo.prestamos WHERE usuario_id = u.id AND estado = 'activo') AS deuda_original,
@@ -21,7 +21,7 @@ router.get('/', async (req, res) => {
        FROM dbo.usuarios u
       WHERE u.es_admin = 0 AND u.activo = 1
         AND (@buscar = '' OR u.nombre LIKE '%' + @buscar + '%' OR u.telefono LIKE '%' + @buscar + '%')
-      ORDER BY activos DESC, u.nombre ASC`,
+      ORDER BY u.favorito DESC, activos DESC, u.nombre ASC`,
     { buscar },
   );
 
@@ -70,7 +70,7 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   const id = Number(req.params.id);
   const uR = await query(
-    `SELECT id, nombre, telefono, notas, tags, created_at, last_login
+    `SELECT id, nombre, telefono, notas, tags, favorito, created_at, last_login
        FROM dbo.usuarios WHERE id = @id AND es_admin = 0`,
     { id },
   );
@@ -108,6 +108,17 @@ router.get('/:id', async (req, res) => {
 router.get('/:id/score', async (req, res) => {
   const score = await calcularScore(Number(req.params.id));
   res.json(score);
+});
+
+/** POST /api/clientes/:id/favorito — toggle favorito */
+router.post('/:id/favorito', async (req: any, res) => {
+  if (!req.user.es_admin) return res.status(403).json({ error: 'No autorizado' });
+  const id = Number(req.params.id);
+  const r = await query(`SELECT favorito FROM dbo.usuarios WHERE id=@id`, { id });
+  const actual = !!r.recordset[0]?.favorito;
+  const nuevo = actual ? 0 : 1;
+  await query(`UPDATE dbo.usuarios SET favorito=@f WHERE id=@id`, { id, f: nuevo });
+  res.json({ ok: true, favorito: nuevo === 1 });
 });
 
 /** PUT /api/clientes/:id/tags  { tags: string[] } */

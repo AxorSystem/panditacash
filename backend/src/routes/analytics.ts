@@ -102,6 +102,42 @@ router.get('/', async (req, res) => {
   });
 });
 
+/** GET /api/analytics/comparativa — mes actual vs mes anterior + distribución por método */
+router.get('/comparativa', async (_req, res) => {
+  const actual = await query(`
+    SELECT
+      ISNULL(SUM(monto_capital), 0) AS capital,
+      ISNULL(SUM(monto_mora), 0) AS mora,
+      COUNT(*) AS n
+    FROM dbo.movimientos
+    WHERE fecha_pago >= DATEADD(day, 1 - DAY(GETUTCDATE()), CAST(GETUTCDATE() AS DATE))
+  `);
+
+  const anterior = await query(`
+    SELECT
+      ISNULL(SUM(monto_capital), 0) AS capital,
+      ISNULL(SUM(monto_mora), 0) AS mora,
+      COUNT(*) AS n
+    FROM dbo.movimientos
+    WHERE fecha_pago >= DATEADD(month, -1, DATEADD(day, 1 - DAY(GETUTCDATE()), CAST(GETUTCDATE() AS DATE)))
+      AND fecha_pago < DATEADD(day, 1 - DAY(GETUTCDATE()), CAST(GETUTCDATE() AS DATE))
+  `);
+
+  const porMetodo = await query(`
+    SELECT metodo, ISNULL(SUM(monto_capital + monto_mora), 0) AS total, COUNT(*) AS n
+      FROM dbo.movimientos
+      WHERE fecha_pago >= DATEADD(month, -3, GETUTCDATE())
+      GROUP BY metodo
+      ORDER BY total DESC
+  `);
+
+  res.json({
+    mes_actual: actual.recordset[0],
+    mes_anterior: anterior.recordset[0],
+    por_metodo: porMetodo.recordset,
+  });
+});
+
 /** GET /api/analytics/actividad — feed unificado de eventos recientes */
 router.get('/actividad', async (_req, res) => {
   const limit = 40;
