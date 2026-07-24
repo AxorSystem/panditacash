@@ -134,6 +134,20 @@ router.post('/aval', async (req: any, res) => {
   res.json({ ok: true, aval_id: insR.recordset[0].id });
 });
 
+// DELETE /api/kyc/aval/:id — borra un aval (solo su dueño o admin)
+router.delete('/aval/:id', async (req: any, res) => {
+  const id = Number(req.params.id);
+  const r = await query(`SELECT usuario_id FROM dbo.avales WHERE id=@id`, { id });
+  const av = r.recordset[0];
+  if (!av) return res.status(404).json({ error: 'No existe' });
+  if (av.usuario_id !== req.user.id && !req.user.es_admin) {
+    return res.status(403).json({ error: 'No autorizado' });
+  }
+  await query(`DELETE FROM dbo.avales WHERE id=@id`, { id });
+  await refreshKycCompleto(av.usuario_id);
+  res.json({ ok: true });
+});
+
 // TODO: endpoints tarjeta (Mercado Pago) — placeholders
 router.post('/tarjeta/token', async (_req, res) => {
   res.status(501).json({ error: 'Integración Mercado Pago pendiente de credentials' });
