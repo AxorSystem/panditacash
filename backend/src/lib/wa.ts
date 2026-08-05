@@ -15,6 +15,7 @@ import { query } from '../db.js';
 
 export type TipoNotif =
   | 'otp'
+  | 'pin_reset'
   | 'nuevo_prestamo'
   | 'solicitud_aprobada'
   | 'solicitud_rechazada'
