@@ -32,5 +32,5 @@ Ganancia mamá: **$3,000 en 3 meses** por prestar $10,000.
 
 ## URLs
 
-- Frontend: https://panditacash.5-78-222-255.sslip.io/
-- Backend: https://api-panditacash.5-78-222-255.sslip.io/api/health
+- Frontend: https://panditacash.axorcloud.com/
+- Backend: https://api-panditacash.axorcloud.com/api/health

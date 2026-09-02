@@ -4,7 +4,7 @@ App nativa iOS + Android generada con [Capacitor](https://capacitorjs.com/).
 
 - **App ID**: `com.axorsystem.panditacash`
 - **App Name**: PanditaCash
-- **Modo**: la app carga la web en `https://panditacash.5-78-222-255.sslip.io` — cualquier cambio en la web aparece en la app **sin resubir el APK/IPA**. Es lo mejor de los dos mundos: distribución nativa + actualizaciones instantáneas.
+- **Modo**: la app carga la web en `https://panditacash.axorcloud.com` — cualquier cambio en la web aparece en la app **sin resubir el APK/IPA**. Es lo mejor de los dos mundos: distribución nativa + actualizaciones instantáneas.
 
 ## Requisitos
 
